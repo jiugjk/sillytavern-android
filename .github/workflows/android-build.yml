@@ -228,11 +228,18 @@ jobs:
 
       - name: Decode release keystore
         id: signing
-        if: inputs.build_type != 'debug' && secrets.ANDROID_KEYSTORE_BASE64 != ''
+        # The secrets context is not available in step-level `if:`, so the
+        # "is the keystore configured?" test has to happen inside the script.
+        if: inputs.build_type != 'debug'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "ANDROID_KEYSTORE_BASE64 is unset; the release APK stays unsigned." >&2
+            exit 0
+          fi
           keystore="$RUNNER_TEMP/release.keystore"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$keystore"
           if [ ! -s "$keystore" ]; then
