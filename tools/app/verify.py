@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Static experimental APK verification. Does not certify WebView/Android behavior."""
+"""Verify APK identity, permissions, native libraries and packaged assets."""
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
@@ -30,19 +31,36 @@ def main():
     run([tools / 'apksigner', 'verify', '--verbose', args.apk])
     run([tools / 'zipalign', '-c', '-P', '16', '-v', '4', args.apk], stdout=subprocess.DEVNULL)
     badging = capture([tools / 'aapt2', 'dump', 'badging', args.apk])
-    for required in ["package: name='dev.stshell.app'", "minSdkVersion:'34'", "targetSdkVersion:'36'", "native-code: 'arm64-v8a'", 'application-debuggable']:
+    for required in ["package: name='dev.stshell.app'", "minSdkVersion:'34'", "targetSdkVersion:'36'", "native-code: 'arm64-v8a'", "application: label='SillyTavern'", 'application-debuggable']:
         if required not in badging: raise ValueError(f'Unexpected APK policy: {required}')
-    permissions = [line for line in badging.splitlines() if line.startswith('uses-permission:')]
-    if permissions != ["uses-permission: name='android.permission.INTERNET'"]:
-        raise ValueError('Unexpected permissions in foreground-only experiment')
+    permissions = {line.split("name='")[1].split("'")[0] for line in badging.splitlines() if line.startswith('uses-permission:')}
+    expected_permissions = {'android.permission.INTERNET', 'android.permission.POST_NOTIFICATIONS',
+                            'android.permission.FOREGROUND_SERVICE', 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE',
+                            'android.permission.WAKE_LOCK'}
+    if permissions != expected_permissions:
+        raise ValueError(f'Unexpected launcher permissions: {sorted(permissions)}')
     runtime = verify_artifacts(ROOT / 'build/runtime', lock, tc / 'bin/llvm-readelf')
     expected = contract()
     with zipfile.ZipFile(args.apk) as apk, tempfile.TemporaryDirectory() as temp:
+        icon_metadata = json.loads((ROOT / 'tools/icons/manifest.json').read_text())
+        for density, size in icon_metadata['densities'].items():
+            for name in ('ic_launcher', 'ic_launcher_round'):
+                data = apk.read(f'res/mipmap-{density}-v4/{name}.png')
+                if not data.startswith(b'\x89PNG\r\n\x1a\n') or struct.unpack('>II', data[16:24]) != (size, size):
+                    raise ValueError(f'Packaged icon dimensions mismatch: {density}/{name}')
+        for name in ('ic_launcher', 'ic_launcher_round'):
+            tree = capture([tools / 'aapt2', 'dump', 'xmltree', args.apk, '--file', f'res/mipmap-anydpi-v33/{name}.xml'])
+            if not all(f'E: {tag}' in tree for tag in ('adaptive-icon', 'background', 'foreground', 'monochrome')):
+                raise ValueError(f'Incomplete adaptive icon: {name}')
+        if 'res/drawable/ic_stat_sillytavern.xml' not in apk.namelist():
+            raise ValueError('Missing notification icon')
         if json.loads(apk.read('assets/app-contract.json')) != expected: raise ValueError('Stale app contract/source inputs')
         if json.loads(apk.read('assets/runtime-manifest.json')) != runtime: raise ValueError('Wrong runtime manifest')
         for name, wanted in [('assets/payload/payload.zip', expected['payload']['archiveSha256']),
                              ('assets/payload/manifest.json', expected['payload']['manifestSha256']),
-                             ('assets/app/entry.mjs', expected['inputs']['runtime/android/entry.mjs'])]:
+                             ('assets/app/entry.mjs', expected['inputs']['runtime/android/entry.mjs']),
+                             ('assets/app/request-observer.mjs', expected['inputs']['runtime/android/request-observer.mjs']),
+                             ('assets/app/generation-observer.js', expected['inputs']['runtime/android/generation-observer.js'])]:
             with apk.open(name) as stream:
                 if digest(stream) != wanted: raise ValueError(f'Packaged asset checksum mismatch: {name}')
         if apk.getinfo('assets/payload/payload.zip').compress_type != zipfile.ZIP_STORED:
@@ -58,10 +76,10 @@ def main():
                 for block in iter(lambda: stream.read(1024 * 1024), b''): out.write(block)
             inspect_elf(target, tc / 'bin/llvm-readelf', extra_dependencies={'libnode.so'})
             if target.name == 'libnode.so' and sha256(target) != runtime['files']['lib/libnode.so']: raise ValueError('Changed libnode')
-    print(f'PASS: experimental APK static checks, {args.apk.stat().st_size} bytes. Android/WebView/background NOT verified.')
+    print(f'PASS: APK static checks, {args.apk.stat().st_size} bytes.')
 
 
 if __name__ == '__main__':
     try: main()
     except (ValueError, OSError, KeyError, subprocess.CalledProcessError, zipfile.BadZipFile) as error:
-        sys.exit(f'Experimental APK verification failed: {error}')
+        sys.exit(f'APK verification failed: {error}')

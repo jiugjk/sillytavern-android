@@ -1,6 +1,17 @@
-# 实施状态（方案A / 前台实验集成已构建，设备门禁未关闭）
+# 实施状态
 
-用户已批准继续实施，并已回传一次Android arm64探针成功结果。单次基础运行已有设备侧证据，但完整M1的系统/页大小、构建指纹和重复进程运行汇总仍待补齐，不因此宣称ST或后台生成已通过。这里区分用户回传、本机采集、宿主测试与静态产物。
+## 当前任务：P0 应用图标
+
+- 交付 `build/releases/sillytavern-android-0.3.0-p0.apk`，版本0.3.0 / versionCode 3。
+- 来源：ST `public/img/logo.svg`，背景沿用`apple-icon-512x512.png`。
+- 已完成七档mipmap、自适应前景/背景与monochrome、最近任务、通知小图标/彩色大图标。
+- 按用户统一要求清理启动器同类文案/注释，保留版权和许可证原文；未改ST源码，未实施P1/P2。
+- 图标6项、App JVM14项、Python28项、Node32项通过；APK静态资源/签名/对齐检查通过。设备图标测试已编译，等用户确认实际显示。
+- 文件与原因、素材指纹：`docs/p0-icons.md`。
+
+## 先前阶段记录（方案A）
+
+用户已回传一次Android arm64探针成功结果，并进一步反馈真实ST App“能正常运行和显示”。据此确认用户设备上的前台基础链路，但不推断远程生成/保存、双页大小或锁屏成功。现已构建v0.2后台保护实验版，仍等设备结果。
 
 ## 已完成的工程内容
 
@@ -12,7 +23,8 @@
 - 新增`tools/payload/`：官方ST归档+锁定生产依赖、确定性ZIP、逐文件库存/校验、受限解包；`runtime/mobile/`提供外层启动与配置策略。
 - 新增真实ST宿主回归：认证、实际监听、配置迁移、WASM、PNG卡片、状态持久化/恢复、SSE转发与取消及篡改拒绝。
 - v0.2探针新增手机一键双轮自检、真实系统/API/page size采集、精简指纹汇总、复制/保存JSON。UI与instrumentation共享协调器和每轮校验器；探针仍不加载ST payload。
-- 新增独立`android-app/`前台实验构建：真实payload、复用M1 JNI、`:server`进程、内核状态锁、Native健康检查、同源WebView及文件选择器。原探针源码/指纹未被这轮改动改变。
+- 独立`android-app/`：真实payload、复用M1 JNI、`:server`进程、内核状态锁、Native健康检查、同源WebView及文件选择器；保留当前已提交的默认中文逻辑。
+- v0.2新增用户主动开启的UI进程specialUse FGS、可见通知/停止按钮、工作驱动CPU锁、主frame受限活动桥和Node HTTP生命周期计数；无fetch/生成/保存逻辑替换。
 
 ## 已执行与收到的证据（区分来源）
 
@@ -39,10 +51,12 @@
 | 确定性payload构建 | 两次独立`npm ci`/打包得到相同payloadId、manifest SHA和ZIP SHA；`cmp current.json`通过 |
 | 官方源码一致性 | 归档中的全部官方tracked文件与固定submodule逐文件一致，运行后payload文件内容和库存未变 |
 | 前台实验App构建/静态检查 | 已通过：真实payload与Node库入包、签名、仅arm64、16KB ELF/ZIP、资产hash；**Android执行未验证** |
-| App JVM测试 | 6项通过（含真实payload提取/复核、hash拒绝和URL边界） |
-| App启动日志包装器 | 1项新增Node测试通过：只记录启动、保留输出语义及退出码；全量Node宿主现为25项通过 |
-| 实验App Lint | 0 errors、29 warnings，含target/依赖更新、实验UI文字和跨Activity保留WebView/Context的内存风险提示；需设备生命周期/内存验证 |
-| 前台ST/WebView instrumentation | 已编译`AppSmokeTest`，尚未执行；没有设备连接，不能标为通过 |
+| App JVM测试 | 14项通过：7项既有边界/中文/真实payload测试，7项资源状态机测试 |
+| App启动日志包装器 | 1项新增Node测试通过：只记录启动、保留输出语义及退出码；全量Node宿主现为32项通过 |
+| 实验App Lint（v0.2） | 0 errors、37 warnings；保留WakeLock无固定超时提示、Context/WebView持有风险及工具/文字警告，未隐藏；需设备资源释放/耗电验证 |
+| 前台ST/WebView设备反馈 | 用户明确反馈能正常运行与显示；没有补造API生成或保存成绩 |
+| instrumentation | 已编译`AppSmokeTest`及FGS通知/启停/空闲释放控制断言，未在构建机设备执行；这些控制断言本身不证明锁屏生成 |
+| 观察器宿主测试 | 新增5项JS观察器、2项Node diagnostics_channel真实HTTP测试通过；含dry-run、保存前流对象保留、取消、群聊、隐私及写失败不影响请求 |
 | 新增宿主启动测量 | 冷启动12.236秒、相同state重启4.111秒、复制state到新路径后3.912秒；包含全量hash检查和运行期Webpack，**不是Android成绩** |
 
 ## 用户回传的Android单次证据
@@ -73,11 +87,12 @@
 ## 未完成，不作承诺
 
 - **完整M1尚未通过**：已有单次Android基础探针成功回传；仍缺系统/页大小与构建绑定信息、重复进程运行汇总，以及真实ST在Android上的依赖兼容与生命周期覆盖。
-- 已写前台实验集成，但未在设备上证明ST/WebView可用。没有FGS生产后台生成、完整下载导出、更新回滚或正式发布流水线。
+- 前台运行/显示已有用户确认；后台FGS/唤醒锁只是新增实验实现，锁屏生成与保存、Doze/OEM/renderer失败等尚未实测通过。完整下载导出、更新回滚和正式分发仍未完成。
 - HTTP Basic/WebView初次挑战、重定向、服务退出端口接管竞态等安全路径仍未完成设备对抗验证；HTTP loopback不是相互认证TLS。只使用测试数据/临时凭据，详见`foreground-experiment.md`。
 - 旧配置alias可能在上游迁移时覆盖新策略键；启动器先调用上游原有迁移函数、再施加策略并复核，已覆盖legacy config/env测试，无ST patch。
 - 前台实验Service通过内核`native.lock`独占状态后才清理旧JS锁，避免PID猜测；实现与设备崩溃恢复仍需验证。宿主停机复制state回归不是完整产品备份功能。
-- 仅禁用了本地模型自动下载，不声称已移除本地provider UI/端点；尚有39项npm许可资料需要人工复核，未通过M6。
+- 仅禁用了本地模型自动下载，不声称已移除本地provider UI/端点；39项npm许可资料仍待复核。
+- 保留当前仓库已提交配置：allowKeysExposure=true、聊天自动备份关闭、lazyLoadCharacters=true/useDiskCache=false；不是本轮擅自切换，已告知风险。旧payload与该配置不同，已重建。
 - 探针需保持界面可见；其120秒watchdog限制的是诊断进程，不是产品生成时长。
 - 后台生成仍按M3.5验证浏览器消费流、服务端abort及聊天保存链，不删除酒馆的正常取消/超时逻辑。
 
@@ -117,9 +132,17 @@ payload与M1探针独立：本次v0.2只改善诊断采集，仍不包含ST payl
 - 启动前校验全部资源，Native自检后再加载ST；无FGS/wake lock、无后台保证、未完成Blob/认证下载导出及音视频权限。
 - 仅编译/JVM/静态检查通过，手机操作与安全限制见`docs/foreground-experiment.md`。原v0.2探针已再次核验，指纹/文件hash未变。
 
+## 当前后台保护实验APK v0.2
+
+- `build/experiments/st-android-background-v0.2.apk`，256,032,678字节，versionCode=2，可覆盖原App。
+- SHA256：`e26d6ce22208e8f96eb7ca4ff83636cd5eec153f163e66cf2f78c31859773c5c`
+- 同目录仪器包：`st-android-background-v0.2-androidTest.apk`，SHA256 `763b3265b9b7c63b4620f63643d6e5ae07f58199a7478360def8a54c584dbff3`。
+- 当前payload：`e26445e23e7c9534b00512090d21f4028d14ea71f3be4655fe57e941bd28e4b8`；包含现有已提交策略，不含用户聊天。
+- 说明/安全边界/字段含义：`docs/background-experiment.md`。此前v0.1和旧payload信息保留作历史记录。
+
 ## 下一步
 
-可先安装前台实验包，保持前台点击“启动”，成功/失败后发回“诊断”JSON；这会提供真实ST/Android集成证据，不等于后台通过。
+覆盖安装v0.2，等待观察器就绪后主动开启“后台保护”，确认持续通知，再做测试聊天的锁屏生成/重开后持久化验证，发回“诊断”JSON。只有观察到完整回复与保存才推进M3.5，不以通知或wakeHeld=true代替成功。
 
 完整M1资料也仍可直接覆盖安装v0.2主APK，点击“开始完整自检（自动两轮）”，等显示通过后复制整个汇总JSON或保存文件发回；无需先连ADB。它自动补充系统/页大小、实际指纹和两次运行信息，但不会凭空产生另一种页大小覆盖。
 

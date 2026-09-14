@@ -34,13 +34,36 @@ class AppSmokeTest {
             assertEquals(5, server.getJSONObject("health").getJSONArray("tests").length())
             assertEquals("android", latest.getJSONObject("node-info.json").getString("platform"))
             assertEquals("arm64", latest.getJSONObject("node-info.json").getString("arch"))
-            latest.put("smokePassed", true)
+            // Check notification permission, foreground transitions and idle CPU state.
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                instrumentation.uiAutomation.executeShellCommand("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
+            ).use { it.readBytes() }
+            var bridgeReady = false
+            val bridgeDeadline = SystemClock.elapsedRealtime() + 15000
+            while (!bridgeReady) {
+                instrumentation.runOnMainSync { bridgeReady = SessionController.canProtect() }
+                assertTrue("Activity observer did not become ready", SystemClock.elapsedRealtime() < bridgeDeadline)
+                Thread.sleep(100)
+            }
+            instrumentation.runOnMainSync { SessionController.enableProtection() }
+            val guardDeadline = SystemClock.elapsedRealtime() + 10000
+            while (!BackgroundProtectionService.diagnostic().optBoolean("foreground")) {
+                assertTrue("FGS did not start: ${BackgroundProtectionService.diagnostic()}", SystemClock.elapsedRealtime() < guardDeadline)
+                Thread.sleep(100)
+            }
+            assertFalse(BackgroundProtectionService.diagnostic().optBoolean("wakeHeld"))
+            instrumentation.runOnMainSync { SessionController.disableProtection() }
+            val stopDeadline = SystemClock.elapsedRealtime() + 5000
+            while (BackgroundProtectionService.running) {
+                assertTrue(SystemClock.elapsedRealtime() < stopDeadline); Thread.sleep(100)
+            }
+            latest.put("backgroundControlsPassed", true).put("smokePassed", true)
         } catch (error: Throwable) {
             latest.put("smokePassed", false).put("smokeError", error.stackTraceToString())
             throw error
         } finally {
             AppFiles.writeJson(File(context.filesDir, "foreground-smoke.json"), latest)
-            instrumentation.runOnMainSync { SessionController.stop(); activity.finish() }
+            instrumentation.runOnMainSync { SessionController.disableProtection(); SessionController.stop(); activity.finish() }
         }
     }
 }

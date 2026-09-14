@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "upstreamCommit": "c0a417b240c640037bab69529aa1e0c466c69397",
+  "sources": {
+    "upstream/SillyTavern/public/img/logo.svg": "f781779749f4903d20380a1d957b0bad679e57c76c392ee83282bda844d5dba0",
+    "upstream/SillyTavern/public/img/apple-icon-512x512.png": "d0c1dbe0925f5197e33dc84019ec327fc5af3d4d1fbe9a1f73633993c91c1e45"
+  },
+  "densities": {
+    "ldpi": 36,
+    "mdpi": 48,
+    "tvdpi": 64,
+    "hdpi": 72,
+    "xhdpi": 96,
+    "xxhdpi": 144,
+    "xxxhdpi": 192
+  },
+  "adaptiveViewport": 108,
+  "safeDiameter": 66.0,
+  "files": {
+    "drawable/ic_launcher_foreground.xml": "2e0768f792edce1a87ebba615a7800a2d2b20a666767a276cedb6b01ffd700c7",
+    "drawable/ic_launcher_monochrome.xml": "faf77ea2b8c4b061b54f11154b27e8d8bb4d36b5afec66e56823657b43f271fc",
+    "drawable/ic_stat_sillytavern.xml": "ab34e3047e23df57f855ec9667c92e765d7bc19d22381c0aeff38673db9f62d5",
+    "mipmap-anydpi-v26/ic_launcher.xml": "32715ff646f6b9fef7c321138e4a14556c4a1f98a87b06070b56f41643dad718",
+    "mipmap-anydpi-v26/ic_launcher_round.xml": "32715ff646f6b9fef7c321138e4a14556c4a1f98a87b06070b56f41643dad718",
+    "mipmap-anydpi-v33/ic_launcher.xml": "bbaf996b7b1356da55819d20c1920c34e20b1288fe7cec441aefeda5ea53d24a",
+    "mipmap-anydpi-v33/ic_launcher_round.xml": "bbaf996b7b1356da55819d20c1920c34e20b1288fe7cec441aefeda5ea53d24a",
+    "mipmap-hdpi/ic_launcher.png": "ac3bd57540d3e59faf406262fdaea0763074e82f660b13a72c6b46970b27d8a4",
+    "mipmap-hdpi/ic_launcher_round.png": "a9f3b688cadb3574590755af44fd8093d7de51e41bc687dd1109bb47313c81e7",
+    "mipmap-ldpi/ic_launcher.png": "72f808486db80ec91e4abcce373c1beb7678abc2ebc330240d9e08c875716e93",
+    "mipmap-ldpi/ic_launcher_round.png": "f73466555466aade0a3493c007920b59ddd9c2544b250fbc47eced10b3d46787",
+    "mipmap-mdpi/ic_launcher.png": "49d774dd37c5faa01f6b88246664b47f188f206ff78d8a2977c94fe6becc5494",
+    "mipmap-mdpi/ic_launcher_round.png": "3a66fb73c7ae9edb5f5b30c9bc20e65af7678a8727a23b9eef5edd95ff0048be",
+    "mipmap-tvdpi/ic_launcher.png": "5a9020f3e64732f01217f8d0fc8868bb7b09ff3b8214c7d77219402c063cbc29",
+    "mipmap-tvdpi/ic_launcher_round.png": "2c6ecb33ead7254925f82f14b432e85e66f01d5bc9a21f54b7fc63db8cc69fa4",
+    "mipmap-xhdpi/ic_launcher.png": "a51a0c3ec2248f67735be148397e41eaa1a29484043580ec8ba05d567a8acab2",
+    "mipmap-xhdpi/ic_launcher_round.png": "12f7324ee01bb8c72bf6fc419b7d6e1250b9967bd804675bc87386eec9a2cd7a",
+    "mipmap-xxhdpi/ic_launcher.png": "6e8fe0caa28eed400e805605177161634a734d33ec4fb0eb256df83490c3ba68",
+    "mipmap-xxhdpi/ic_launcher_round.png": "9a3dc28673775c6939c2bfdc332214cf20e28fa5248254a33da4e2dff59f88fe",
+    "mipmap-xxxhdpi/ic_launcher.png": "f7745d42ac135dd9dd94e9e60b1c3dc4112aa02352e8b23430f7e8c6e2a04ae2",
+    "mipmap-xxxhdpi/ic_launcher_round.png": "96b35f06b5a9b6232c20370d194e99b4ea796954629ac96eb262c1004c15cf6b",
+    "values/branding.xml": "5cf1bfb3b19e4fe80f42b32d87601684793b5402fa9e4c53ee27d41bcb2eb210"
+  }
+}

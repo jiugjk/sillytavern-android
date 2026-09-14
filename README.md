@@ -1,8 +1,18 @@
-# SillyTavern Android shell — 前台实验版与运行时探针
+# SillyTavern Android 启动器
+
+## 当前任务：P0 图标
+
+当前交付：`build/releases/sillytavern-android-0.3.0-p0.apk`。已接入ST官方SVG图标的七档mipmap、自适应/主题图标、最近任务和通知图标，并按统一要求清理启动器文案。图标来源、文件列表和验证命令见 [P0记录](docs/p0-icons.md)。
+
+本轮不实施P1/P2；等待用户确认P0后，先给P1两种方案再动手。
+
+以下保留既有构建与阶段记录。
 
 非官方 Android 壳工程。用户已选择方案 A 并批准开始实施：**Node26、独立APK、Android14+、仅arm64、侧载、远程API、后台/锁屏继续生成**。
 
-**现在新增了包含真实ST的前台实验APK**：`build/experiments/st-android-foreground-v0.1.apk`，安装后点击启动，校验/解包/服务端自检后加载WebView。它尚未在Android设备上验收，**不保证后台/锁屏生成，导出/语音等也未完成**，请只用测试数据与临时凭据。操作和风险见[前台实验说明](docs/foreground-experiment.md)。
+用户已确认v0.1真实ST“能正常运行和显示”。当前新增 **v0.2后台保护实验APK**：`build/experiments/st-android-background-v0.2.apk`，可覆盖安装，不要卸载/清除数据。
+
+启动ST并等待“观察器就绪”，再点**后台保护**、允许通知并确认；随后尝试发送长回复再锁屏。保护服务有持续通知，空闲不持CPU锁，停止生成调用酒馆原有接口。**锁屏持续生成与保存仍待你实测，不承诺Doze/强杀后继续；导出/语音仍未完成。** 操作与诊断字段见[后台实验说明](docs/background-experiment.md)，前一版边界保留于[前台实验说明](docs/foreground-experiment.md)。
 
 原v0.2运行时探针保持不变。已收到用户回传的Android arm64单次12/12成功结果及Native退出码0；完整M1仍需补齐汇总。新增实验代码不等于放行M1/M3/M3.5，也没有改写ST生成逻辑。
 
@@ -12,7 +22,7 @@
 - Node：官方26.8.2源码构建为`libnode.so`；来源、校验和、工具链见`upstream.lock.json`。
 - 所有适配位于外层。Node构建补丁及已知配置差异见[patches/README.md](patches/README.md)。
 
-## 0. 构建前台实验APK
+## 0. 构建当前实验APK
 
 实验App放在独立`android-app/`构建中，避免使已有v0.2探针指纹失效；复用同一份M1 JNI桥源码，不改ST。完成下节环境配置并已有payload后：
 
@@ -21,7 +31,9 @@
 python3 tools/app/verify.py android-app/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-App包名`dev.stshell.app`，与探针并存；约243MiB，建议留1.5GiB以上空间。点击“诊断”可复制不含密钥/聊天的状态，必要时再人工检查“启动日志”。这是前台集成实验，不是正式可交付或已验证后台能力的版本。
+App包名`dev.stshell.app`，与探针并存；当前约244MiB，建议留1.5GiB以上空间。点击“诊断”可复制不含密钥/聊天的活动、前台服务、唤醒锁和HTTP请求状态，必要时再人工检查“启动日志”。不是正式可交付或已验证后台可靠性的版本。
+
+后台保护默认关闭、需前台用户主动开启；通知持续整个被保护会话（含空闲），CPU锁按工作释放。现有已提交配置包含`allowKeysExposure=true`和关闭聊天自动备份，本轮保留未擅改；请只使用测试数据和临时凭据。
 
 ## 1. 本机环境
 
@@ -209,7 +221,7 @@ v0.1的“Run capability probe”只能给出单次结果；用户已经回传�
 
 - M1基础运行能力、真实ST/tokenizer/图像导入兼容、完整安全策略与后台生成仍是不同门禁，不能互相替代。
 - 后续优先官方ST入口+原生生命周期最小适配。WebView断流可能让ST取消远端请求，聊天保存也由前端触发，须按M3.5实测，不能仅靠通知/Node存活宣称成功。
-- 已新增payload/Node/WebView的Android前台实验集成及文件选择器；设备验收仍待完成。FGS后台生成、完整下载导出/SAF、更新回滚及正式分发流水线尚未完成。
+- 真实ST/Node/WebView前台显示已有用户确认；现已加入主动开启的UI进程FGS、活动驱动CPU锁、公共事件/HTTP生命周期观察及文件选择器。后台/锁屏生成与保存尚未验收，完整下载导出/SAF、更新回滚及正式分发也未完成。
 
 ## 许可
 

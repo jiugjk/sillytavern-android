@@ -536,7 +536,7 @@ python3 tools/app/verify.py android-app/app/build/outputs/apk/debug/app-debug.ap
 
 现有测试类`dev.stshell.app.AppSmokeTest`检查Native健康结果及真实WebView的chatInput/publicApi；完整安全/生命周期测试尚不齐。仍须验收：未认证401、合法session无CSRF403/有效204、Host403、真实loopback绑定、WebView认证和Cookie/流式请求、恶意导航/重定向、旋转及进程重建。
 
-未完成项：FGS/wake lock/后台生成、完整Blob/认证下载导出、麦克风/相机、升级回滚。HTTP Basic不是服务端身份的双向TLS证明，端口接管/重定向等对抗测试未通过；不要使用重要数据/长期密钥。详见`docs/foreground-experiment.md`。
+未完成项：FGS/wake lock已加入v0.2实验实现，但后台生成/保存设备验收未完成；完整Blob/认证下载导出、麦克风/相机、升级回滚仍未完成。HTTP Basic不是服务端身份的双向TLS证明，端口接管/重定向等对抗测试未通过；不要使用重要数据/长期密钥。详见`docs/foreground-experiment.md`。
 
 可从本机辅查debug socket（不应把adb端口转发当生产功能）：
 
@@ -545,17 +545,23 @@ adb -s "$ANDROID_SERIAL" logcat -d
 adb -s "$ANDROID_SERIAL" shell dumpsys activity services "$APP_ID"
 ```
 
-### M3.5：后台流式生成生死门（新增，不能推迟到发布前）
+### M3.5：后台流式生成生死门（实验实现已加入，设备验收未完成）
 
-交付：在原生FGS生命周期下，真实ST前后端对受控远程API mock的长流生成验证；按§1.4决定是否必须提出外层流恢复适配。
+v0.2已加入用户主动开启的UI进程specialUse FGS，保持本地WebView与其绑定的Node会话；持有持续通知，CPU唤醒按页面/流处理器/群聊和HTTP生成/保存活动释放。所有观测位于外层，未改Generate/fetch/saveChat/取消语义。当前只增加了宿主/JVM及仪器控制测试，不能据此称锁屏成功。
 
-**未来本机命令**（测试实现需启动受控mock并验证其连接/取消日志；当前没有这些实现）：
+下一步仍须在原生FGS生命周期下，验证真实ST前后端的长流生成及保存；按§1.4决定是否必须提出外层流恢复适配。用户反馈v0.1能运行与显示仅是前台证据。
+
+类型理由与边界：这是用户显式开启的持续本机交互会话，不是一次性dataSync；未降低targetSdk或声明系统豁免。specialUse仍受Android/OEM/Doze规则影响，空闲保留通知但释放CPU锁。完整说明、停止入口、诊断指标见`docs/background-experiment.md`。
+
+**当前可执行的实验构建/宿主验证：**
 
 ```bash
-(cd android && ./gradlew :app:connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=BackgroundStreamPersistenceTest)
-python3 tools/verify-background-generation.py --decisions docs/decisions.md --reports build/reports
+(cd android-app && ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug)
+node --test tests/host/generation-observer.test.mjs tests/host/request-observer.test.mjs
+python3 tools/app/verify.py android-app/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+`AppSmokeTest`现可检查观察器就绪、通知权限、FGS启停及空闲CPU释放，但未执行设备测试且不发模型请求。完整`BackgroundStreamPersistenceTest`/锁屏自动化还未实现；不得把上面的控制测试或手动开启通知当成完整长流保存验收。
 
 验收：测试从可见页面发起带已知顺序/数量标记的长SSE，分别切后台、锁屏，按测试定义的多档耐久场景运行并记录持续时间、设备、系统和WebView版本。**测试时长只控制mock负载，不写入产品生成超时。** mock记录请求未被意外取消，输出无遗漏，回前台后聊天可完整恢复并保存，且无重复请求/消息。还要覆盖切Activity、正常取消、notification取消、WebView renderer丢失、上游已有超时与断网；后几类中断必须明确报告/保留可恢复内容，不能偷偷重新生成并重复收费。缺少实际arm64后台/锁屏、socket/落盘断言，不算通过；不以用户提供最长生成时长为前置条件。
 
@@ -674,4 +680,4 @@ python3 tools/termux-smoke.py --serial "$ANDROID_SERIAL" --decisions docs/decisi
 - WebView本地内容：<https://developer.android.com/develop/ui/views/layout/webapps/load-local-content>；网络安全：<https://developer.android.com/privacy-and-security/security-config>。
 - 前台服务类型/限制：<https://developer.android.com/develop/background-work/services/fgs/service-types>；已确定侧载，仍须验证Android14+用途/权限/targetSdk与较新系统限制；当前不要求Play渠道审批。
 
-**需求已收敛且方案A获批实施：Node26独立APK、Android14+、仅arm64、侧载、仅远程API、后台/锁屏继续生成并接受持续通知。生成语义沿用酒馆，不新增壳级总时限。M1已收到单次Android基础成功回传，完整验收待补齐；M2宿主准备已通过；M3前台实验APK已构建但未在设备验收。未通过完整Android/ST运行、安全与M3.5后台流门禁前，不宣称已可交付完整App。**
+**需求已收敛且方案A获批实施：Node26独立APK、Android14+、仅arm64、侧载、仅远程API、后台/锁屏继续生成并接受持续通知。生成语义沿用酒馆，不新增壳级总时限。M1已收到单次Android基础成功回传，完整验收待补齐；M2宿主准备已通过；M3前台运行与显示已有用户反馈，v0.2后台保护已构建但未做锁屏生成验收。未通过完整Android/ST运行、安全与M3.5后台流门禁前，不宣称已可交付完整App。**

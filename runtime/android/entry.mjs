@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { observeRequests } from './request-observer.mjs';
 
 if (process.argv.length !== 3 || !path.isAbsolute(process.argv[2])) throw new Error('Expected private launch descriptor');
 const launchPath = process.argv[2];
@@ -14,6 +15,7 @@ const state = launch.stateRoot;
 const logPath = path.join(state, 'startup.log');
 const infoPath = path.join(state, 'node-info.json');
 const exitPath = path.join(state, 'node-exit.json');
+const activityObserver = observeRequests({ port: launch.port, output: path.join(state, 'request-activity.json') });
 let ready = false;
 let log = Buffer.alloc(0);
 const hooked = [];
@@ -38,6 +40,7 @@ for (const stream of [process.stdout, process.stderr]) {
     hooked.push(() => { if (stream.write === write) stream.write = original; });
 }
 process.on('exit', code => {
+    activityObserver.dispose();
     try { store(exitPath, { schemaVersion: 1, pid: process.pid, exitCode: code, readySeen: ready }); } catch { /* Abrupt OS death may leave no exit report. */ }
 });
 const events = await import(pathToFileURL(path.join(launch.payloadRoot, 'server/src/server-events.js')));

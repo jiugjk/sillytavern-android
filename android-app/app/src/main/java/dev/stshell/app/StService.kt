@@ -14,7 +14,7 @@ import java.nio.channels.FileLock
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Foreground-session experiment: bound, private process; not a background guarantee/FGS. */
+/** Runs the bundled Node server in a private bound service process. */
 class StService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private val cancelled = AtomicBoolean(false)
@@ -30,7 +30,7 @@ class StService : Service() {
     private lateinit var contract: JSONObject
     private lateinit var payload: File
     private var port = 0
-    private val diagnostic = JSONObject().put("schemaVersion", 1).put("scope", "android-foreground-experiment")
+    private val diagnostic = JSONObject().put("schemaVersion", 1).put("scope", "android-launcher")
     private fun record(change: (JSONObject) -> Unit) { synchronized(diagnostic) { change(diagnostic) } }
     private fun saveDiagnostic(value: String) { synchronized(diagnostic) { AppFiles.writeJson(File(state, "app-diagnostic.json"), diagnostic.put("phase", value)) } }
     private val incoming = Messenger(Handler(Looper.getMainLooper()) { message ->
@@ -56,7 +56,7 @@ class StService : Service() {
                 lock = lockFile.channel.tryLock() ?: error("已有Node服务持有状态目录")
                 // Kernel lock release proves a previous cooperating service is
                 // gone. Never delete a JS lock merely because a PID looks stale.
-                for (name in listOf("bootstrap.lock", "ready.json", "node-exit.json", "node-info.json", "startup.log")) {
+                for (name in listOf("bootstrap.lock", "ready.json", "node-exit.json", "node-info.json", "startup.log", "request-activity.json")) {
                     val file = File(state, name)
                     require(!Files.isSymbolicLink(file.toPath()))
                     if (file.exists()) check(file.delete())
@@ -79,12 +79,15 @@ class StService : Service() {
                 AppFiles.writeJson(launch, JSONObject().put("schemaVersion", 1).put("payloadRoot", payload.absolutePath)
                     .put("stateRoot", state.absolutePath).put("port", port)
                     .put("manifestSha256", contract.getJSONObject("payload").getString("manifestSha256")))
-                val entry = File(state, "app-entry.mjs")
-                val script = assets.open("app/entry.mjs").use { it.readBytes() }
-                require(PayloadArchive.hash(script) == contract.getJSONObject("inputs").getString("runtime/android/entry.mjs"))
-                require(!Files.isSymbolicLink(entry.toPath()))
-                entry.writeBytes(script)
-                Os.chmod(entry.absolutePath, 0x180)
+                for (name in listOf("entry.mjs", "request-observer.mjs")) {
+                    val target = File(state, name)
+                    val script = assets.open("app/$name").use { it.readBytes() }
+                    require(PayloadArchive.hash(script) == contract.getJSONObject("inputs").getString("runtime/android/$name"))
+                    require(!Files.isSymbolicLink(target.toPath()))
+                    target.writeBytes(script)
+                    Os.chmod(target.absolutePath, 0x180)
+                }
+                val entry = File(state, "entry.mjs")
                 // Sanitize before Node sees environment-driven preload options.
                 for (key in System.getenv().keys) if (key.startsWith("SILLYTAVERN_") || key in setOf("NODE_OPTIONS", "NODE_PATH", "NODE_TLS_REJECT_UNAUTHORIZED")) Os.unsetenv(key)
                 Os.setenv("HOME", state.absolutePath, true)
@@ -147,13 +150,13 @@ class StService : Service() {
     private fun publish() {
         try {
             reply?.send(Message.obtain(null, STATUS).apply {
-                data = Bundle().apply { putString("phase", phase); putString("detail", detail); putInt("done", done); putInt("total", total); putInt("port", port) }
+                data = Bundle().apply { putString("phase", phase); putString("detail", detail); putInt("done", done); putInt("total", total); putInt("port", port); putInt("servicePid", Process.myPid()) }
             })
         } catch (_: RemoteException) { reply = null }
     }
     private fun requestStop(preserveFailure: Boolean = false) {
         if (cancelled.getAndSet(true)) return
-        if (!preserveFailure) status("stopping", "停止服务会中断未完成生成")
+        if (!preserveFailure) status("stopping", "正在停止服务")
         if (nativeStarted) {
             if (serverStarted) Process.sendSignal(Process.myPid(), OsConstants.SIGTERM)
             else Process.killProcess(Process.myPid())

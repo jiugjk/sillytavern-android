@@ -22,6 +22,7 @@ def copy_if_changed(source, destination):
 
 def main():
     verify_project()
+    subprocess.run([sys.executable, ROOT / 'tools/icons/verify.py'], check=True)
     lock = read_lock()
     _, tc, _ = sdk_paths(lock)
     verify_artifacts(ROOT / 'build/runtime', lock, tc / 'bin/llvm-readelf')
@@ -34,14 +35,16 @@ def main():
     assets = ROOT / 'build/app-inputs/assets'
     copy_if_changed(artifact / 'payload.zip', assets / 'payload/payload.zip')
     copy_if_changed(artifact / 'manifest.json', assets / 'payload/manifest.json')
-    copy_if_changed(ROOT / 'runtime/android/entry.mjs', assets / 'app/entry.mjs')
+    for file in (ROOT / 'runtime/android').iterdir():
+        if file.is_file() and file.suffix in ('.mjs', '.js'):
+            copy_if_changed(file, assets / 'app' / file.name)
     copy_if_changed(ROOT / 'build/runtime/manifest.json', assets / 'runtime-manifest.json')
     copy_if_changed(ROOT / 'LICENSE', assets / 'licenses/AGPL-3.0.txt')
     for file in (ROOT / 'licenses').iterdir():
         if file.is_file(): copy_if_changed(file, assets / 'licenses' / file.name)
     data = contract()
     (assets / 'app-contract.json').write_text(json.dumps(data, indent=2) + '\n')
-    print('Prepared experimental app inputs:', data['appIdentity'], '; no Android execution claimed')
+    print('Prepared app inputs:', data['appIdentity'])
 
 
 if __name__ == '__main__':

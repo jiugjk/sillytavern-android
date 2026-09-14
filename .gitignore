@@ -17,3 +17,11 @@ __pycache__/
 *.keystore
 .env
 .DS_Store
+.idea/
+*.iml
+*.apk
+*.aab
+*.log
+.venv/
+venv/
+captures/

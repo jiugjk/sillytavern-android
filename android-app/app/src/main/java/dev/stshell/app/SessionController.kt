@@ -8,12 +8,16 @@ import android.net.http.SslError
 import android.os.*
 import android.view.ViewGroup
 import android.webkit.*
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import androidx.webkit.WebMessageCompat
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.lang.ref.WeakReference
+import java.util.UUID
 
-/** Keeps one WebView + bound server connection through Activity recreation. No FGS claim. */
+/** Retains the WebView and bound Node connection across Activity instances. */
 @SuppressLint("SetJavaScriptEnabled")
 object SessionController {
     private val main = Handler(Looper.getMainLooper())
@@ -27,11 +31,18 @@ object SessionController {
     private var contextWrapper: MutableContextWrapper? = null
     private var web: WebView? = null
     private var browserOrigin: String? = null
+    private val generation = GenerationState()
+    private var observerToken = ""
+    private var observerInjected = false
+    private var bridgeAvailable = false
+    private var serverPid = 0
+    private var activityVisible = false
     private var state = JSONObject().put("phase", "idle")
     var fileCallback: ValueCallback<Array<Uri>>? = null
     private val receiver = Messenger(Handler(Looper.getMainLooper()) { message ->
         if (message.what == StService.STATUS) {
             val data = message.data
+            serverPid = data.getInt("servicePid")
             state = JSONObject().put("phase", data.getString("phase")).put("detail", data.getString("detail"))
                 .put("done", data.getInt("done")).put("total", data.getInt("total")).put("port", data.getInt("port"))
             if (state.optString("phase") == "ready") {
@@ -83,6 +94,7 @@ object SessionController {
     fun stop(restart: Boolean = false) {
         restartGeneration++
         retry = restart; intentionalStop = true
+        BackgroundProtectionService.disable(app)
         disposeBrowser()
         if (service == null) {
             releaseBinding()
@@ -102,8 +114,9 @@ object SessionController {
     private fun disconnected() {
         if (!bound && service == null) return
         releaseBinding(); disposeBrowser()
+        BackgroundProtectionService.disable(app)
         state = JSONObject().put("phase", if (intentionalStop) "stopped" else "failed")
-            .put("detail", if (intentionalStop) "服务已停止" else "服务进程退出；已保存数据保留，未完成生成不会自动重试")
+            .put("detail", if (intentionalStop) "服务已停止" else "服务已退出，请重新启动")
         render()
         if (retry) {
             retry = false
@@ -112,12 +125,14 @@ object SessionController {
         }
     }
     private fun disposeBrowser() {
+        generation.detach(); observerInjected = false; bridgeAvailable = false
+        BackgroundProtectionService.refresh()
         fileCallback?.onReceiveValue(null); fileCallback = null
         web?.let { (it.parent as? ViewGroup)?.removeView(it); it.stopLoading(); it.destroy() }
         web = null; contextWrapper = null; browserOrigin = null
     }
     private fun blocked() = WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", emptyMap(),
-        ByteArrayInputStream("External WebView network access is disabled in this experiment".toByteArray()))
+        ByteArrayInputStream("External WebView network access is disabled".toByteArray()))
 
     private fun openBrowser(port: Int) {
         val origin = LocalOrigin(port)
@@ -131,6 +146,20 @@ object SessionController {
         var initialAuth = true
         val view = WebView(wrapper)
         web = view; browserOrigin = origin.value
+        observerToken = UUID.randomUUID().toString().replace("-", "")
+        generation.reset(observerToken)
+        bridgeAvailable = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(view, "stShellActivity", setOf(origin.value)) { sourceView, message, sourceOrigin, isMainFrame, _ ->
+                if (sourceView === web && isMainFrame && message.type == WebMessageCompat.TYPE_STRING && origin.allows(sourceOrigin.toString() + "/")) {
+                    val text = message.data
+                    if (text != null && generation.accept(text, SystemClock.elapsedRealtime())) {
+                        BackgroundProtectionService.refresh()
+                        render()
+                    }
+                }
+            }
+        }
         view.settings.javaScriptEnabled = true
         view.settings.domStorageEnabled = true
         view.settings.allowFileAccess = false
@@ -145,12 +174,29 @@ object SessionController {
                 if (origin.allows(request.url.toString())) null else blocked()
         })
         view.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                if (web === view && origin.allows(url)) {
+                    observerToken = UUID.randomUUID().toString().replace("-", "")
+                    observerInjected = false
+                    generation.reset(observerToken)
+                    BackgroundProtectionService.refresh()
+                }
+            }
             private fun checkDom(view: WebView, attempt: Int = 0) {
                 if (web !== view) return
                 view.evaluateJavascript("(function(){return {chatInput:!!document.getElementById('send_textarea'),publicApi:!!(window.SillyTavern&&window.SillyTavern.getContext),login:location.pathname==='/login'};})()") { result ->
                     if (web === view) {
                         try {
                             val dom = JSONObject(result); state.put("dom", dom)
+                            if (dom.optBoolean("publicApi") && bridgeAvailable && !observerInjected) {
+                                val scriptBytes = app.assets.open("app/generation-observer.js").use { it.readBytes() }
+                                val expected = app.assets.open("app-contract.json").bufferedReader().use { JSONObject(it.readText()) }
+                                    .getJSONObject("inputs").getString("runtime/android/generation-observer.js")
+                                check(PayloadArchive.hash(scriptBytes) == expected)
+                                val config = JSONObject().put("token", observerToken).toString()
+                                observerInjected = true
+                                view.evaluateJavascript(String(scriptBytes, Charsets.UTF_8).replace("__ST_ANDROID_CONFIG__", config), null)
+                            }
                             if (dom.optBoolean("chatInput") || dom.optBoolean("login")) state.remove("mainHttpError")
                             if (!dom.optBoolean("publicApi") && !dom.optBoolean("login") && attempt < 60) main.postDelayed({ checkDom(view, attempt + 1) }, 500)
                         } catch (_: Exception) { state.put("domCheck", "unavailable") }
@@ -186,7 +232,7 @@ object SessionController {
                     handler.proceed(user, password)
                 } else {
                     handler.cancel()
-                    state.put("detail", "拒绝了额外的HTTP认证挑战；若本机认证失效，请重开实验App")
+                    state.put("detail", "认证未完成，请重新打开应用")
                     render()
                 }
             }
@@ -209,7 +255,7 @@ object SessionController {
                 main.post {
                     if (web !== view) return@post
                     disposeBrowser()
-                    state.put("phase", "browser-error").put("detail", "WebView渲染进程退出；生成可能已中断，请手动重启，不会自动重复收费请求")
+                    state.put("phase", "browser-error").put("detail", "WebView渲染进程已退出，请重新打开页面")
                     render()
                 }
                 return true
@@ -230,20 +276,56 @@ object SessionController {
                 return true
             }
             override fun onPermissionRequest(request: PermissionRequest) {
-                // Microphone/camera integration is a separate milestone.
                 request.deny()
             }
         }
         view.setDownloadListener { _, _, _, _, _ ->
-            activity.get()?.notice("实验版尚未实现Blob/认证下载导出；不要把此App作为数据唯一副本")
+            activity.get()?.notice("此下载无法保存")
         }
         activity.get()?.attachBrowser(view)
         view.loadUrl(origin.value + "/")
     }
-    private fun render() { activity.get()?.showState(JSONObject(state.toString())) }
+    fun canProtect() = web != null && state.optString("phase") == "ready" && bridgeAvailable && generation.ready
+    fun enableProtection() {
+        check(canProtect()) { "请等待ST界面及活动观察器准备完成；不支持桥接的WebView只能前台使用" }
+        check(activityVisible) { "请在前台主动开启后台保护" }
+        BackgroundProtectionService.enable(app)
+    }
+    fun disableProtection() = BackgroundProtectionService.disable(app)
+    fun activityVisibility(visible: Boolean) { activityVisible = visible; BackgroundProtectionService.refresh() }
+    fun cancelGenerationFromNotification() {
+        val view = web ?: return
+        val origin = browserOrigin ?: return
+        if (LocalOrigin(state.optInt("port")).allows(view.url ?: "") && origin == browserOrigin) {
+            view.evaluateJavascript("(function(){const c=window.SillyTavern&&window.SillyTavern.getContext&&window.SillyTavern.getContext();return c&&c.stopGeneration?c.stopGeneration():false;})()", null)
+        }
+    }
+    fun backgroundSnapshot(armed: Boolean): JSONObject {
+        val now = SystemClock.elapsedRealtime()
+        var backend = JSONObject()
+        try {
+            val file = File(AppFiles.state(app), "request-activity.json")
+            if (file.isFile) {
+                val value = AppFiles.readJson(file, 16384)
+                if (value.optInt("schemaVersion") == 1 && value.optInt("pid") == serverPid) backend = value
+            }
+        } catch (_: Exception) { backend.put("readError", true) }
+        val serverReady = service != null && state.optString("phase") == "ready"
+        val needed = generation.wantsCpu(armed, serverReady, backend.optInt("activeGeneration"), backend.optInt("activeSave"), now)
+        return JSONObject().put("serverReady", serverReady).put("cpuNeeded", needed)
+            .put("activityVisible", activityVisible).put("frontend", generation.diagnostic(now)).put("backend", backend)
+    }
+    fun protectionChanged() { render() }
+    private fun render() {
+        val snapshot = JSONObject(state.toString()).put("observer", generation.diagnostic(SystemClock.elapsedRealtime()))
+            .put("bridgeAvailable", bridgeAvailable).put("background", BackgroundProtectionService.diagnostic())
+        activity.get()?.showState(snapshot)
+    }
     fun diagnostic(): JSONObject {
-        val result = JSONObject().put("schemaVersion", 1).put("scope", "android-foreground-experiment")
+        val result = JSONObject().put("schemaVersion", 1).put("scope", "android-launcher")
             .put("ui", JSONObject(state.toString()))
+            .put("background", BackgroundProtectionService.diagnostic())
+            .put("activity", backgroundSnapshot(BackgroundProtectionService.running))
         for (name in listOf("app-diagnostic.json", "node-info.json", "node-exit.json")) {
             try { val file = File(AppFiles.state(app), name); if (file.exists()) result.put(name, AppFiles.readJson(file)) } catch (_: Exception) { }
         }
