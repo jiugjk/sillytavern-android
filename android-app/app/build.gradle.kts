@@ -20,8 +20,8 @@ android {
         applicationId = "dev.stshell.app"
         minSdk = 34
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 5
+        versionName = "0.4.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += listOf("-DNODE_ARTIFACT_DIR=${runtimeDir.absolutePath}", "-DANDROID_STL=c++_shared") } }

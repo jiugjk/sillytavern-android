@@ -15,25 +15,73 @@ import android.os.Bundle
 import android.os.PersistableBundle
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
+import android.view.WindowManager
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import android.webkit.WebView
 import android.widget.*
 import org.json.JSONObject
 
 class MainActivity : Activity() {
-    private lateinit var content: FrameLayout
-    private lateinit var status: TextView
-    private lateinit var progress: ProgressBar
+    private lateinit var launcher: LauncherLayout
+    private var panelStatus: TextView? = null
+    private var panelProgress: ProgressBar? = null
+    private var latestState = JSONObject().put("phase", "idle")
+    private var controlsOpen = false
     private var pendingProtection = false
+    private val closePanelOnBack = OnBackInvokedCallback { closeControls() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         LauncherBranding.applyTaskIcon(this)
+        window.setDecorFitsSystemWindows(false)
+        window.insetsController?.setSystemBarsAppearance(0,
+            android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
+        window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS }
         pendingProtection = savedInstanceState?.getBoolean("pendingProtection") ?: false
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; fitsSystemWindows = true; setPadding(8, 32, 8, 8) }
-        root.addView(TextView(this).apply { text = getString(R.string.app_name); textSize = 18f })
-        root.addView(TextView(this).apply { text = "启动后可开启后台保护"; textSize = 12f })
-        val row = LinearLayout(this)
+        val preferences = getSharedPreferences("launcher-ui", MODE_PRIVATE)
+        val initialAnchor = try {
+            LauncherGeometry.Anchor(
+                if (savedInstanceState?.containsKey("dockRight") == true) savedInstanceState.getBoolean("dockRight") else preferences.getBoolean("dockRight", true),
+                if (savedInstanceState?.containsKey("dockFraction") == true) savedInstanceState.getFloat("dockFraction") else preferences.getFloat("dockFraction", 0.65f)
+            )
+        } catch (_: ClassCastException) { LauncherGeometry.Anchor() }
+        launcher = LauncherLayout(this, initialAnchor, { anchor ->
+            preferences.edit().putBoolean("dockRight", anchor.right).putFloat("dockFraction", anchor.fraction).apply()
+        }, { openControls() }, { closeControls() })
+        setContentView(launcher)
+        SessionController.attach(this)
+        val restorePanel = savedInstanceState?.getBoolean("controlsOpen") == true
+        if (restorePanel || (savedInstanceState == null && !launcher.hasBrowser() && latestState.optString("phase") == "idle")) {
+            launcher.post { if (!isFinishing && !isDestroyed) openControls() }
+        }
+    }
+    fun attachBrowser(view: WebView) {
+        (view.parent as? ViewGroup)?.removeView(view)
+        launcher.browserHost.removeAllViews()
+        launcher.browserHost.addView(view, FrameLayout.LayoutParams(-1, -1))
+        launcher.updateState(latestState.optString("phase"), latestState.optString("detail"), latestState.optInt("done"), latestState.optInt("total"))
+    }
+    fun openControls() {
+        if (controlsOpen || isFinishing || isDestroyed) return
+        window.insetsController?.hide(WindowInsets.Type.ime())
+        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(12), dp(12), dp(12)) }
+        val heading = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+        heading.addView(TextView(this).apply { setText(R.string.launcher_panel_title) }, LinearLayout.LayoutParams(0, -2, 1f))
+        heading.addView(Button(this).apply { setText(R.string.launcher_panel_close); setOnClickListener { closeControls() } })
+        column.addView(heading)
+        panelStatus = TextView(this).apply { id = R.id.launcher_panel_status }
+        panelProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { id = R.id.launcher_panel_progress }
+        column.addView(panelStatus); column.addView(panelProgress)
         fun action(label: String, callback: () -> Unit) {
-            row.addView(Button(this).apply { text = label; setOnClickListener { try { callback() } catch (error: Exception) { notice(error.message ?: "操作失败") } } })
+            column.addView(Button(this).apply {
+                text = label
+                setOnClickListener {
+                    closeControls()
+                    try { callback() } catch (error: Exception) { notice(error.message ?: "操作失败") }
+                }
+            }, LinearLayout.LayoutParams(-1, -2))
         }
         action("启动") { SessionController.start() }
         action("重启") { confirmServiceAction("重启服务") { SessionController.stop(restart = true) } }
@@ -43,31 +91,47 @@ class MainActivity : Activity() {
         action("诊断") { copyDiagnostic() }
         action("启动日志") { showStartupLog() }
         action("说明") { showAbout() }
-        root.addView(HorizontalScrollView(this).apply { addView(row) })
-        status = TextView(this).apply { text = "点击启动；首次解包可能需要较长时间" }
-        root.addView(status)
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
-        root.addView(progress)
-        content = FrameLayout(this)
-        root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
-        setContentView(root)
-        SessionController.attach(this)
+        val background = android.util.TypedValue().also { theme.resolveAttribute(android.R.attr.colorBackground, it, true) }.data
+        val sheet = ScrollView(this).apply {
+            id = R.id.launcher_controls_sheet
+            setBackgroundColor(background); addView(column)
+            accessibilityPaneTitle = getString(R.string.launcher_panel_title)
+            isFocusableInTouchMode = true
+        }
+        controlsOpen = true
+        launcher.browserHost.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        launcher.showPanel(sheet) { closeControls() }
+        onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_OVERLAY, closePanelOnBack)
+        updatePanelState()
+        sheet.requestFocus()
     }
-    fun attachBrowser(view: WebView) {
-        (view.parent as? ViewGroup)?.removeView(view)
-        content.removeAllViews()
-        content.addView(view, FrameLayout.LayoutParams(-1, -1))
+    fun closeControls() {
+        if (!controlsOpen) return
+        controlsOpen = false
+        onBackInvokedDispatcher.unregisterOnBackInvokedCallback(closePanelOnBack)
+        launcher.hidePanel()
+        launcher.browserHost.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+        panelStatus = null; panelProgress = null
     }
+    private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
     fun showState(value: JSONObject) {
+        latestState = JSONObject(value.toString())
+        launcher.updateState(value.optString("phase", "idle"), value.optString("detail"), value.optInt("done"), value.optInt("total"))
+        updatePanelState()
+    }
+    private fun updatePanelState() {
+        val value = latestState
         val phase = value.optString("phase", "idle")
         val all = value.optInt("total"); val done = value.optInt("done")
         val guard = value.optJSONObject("background")
         val protection = if (guard?.optBoolean("enabled") == true) "保护已开 / CPU唤醒${if (guard.optBoolean("wakeHeld")) "中" else "已释放"}" else "保护未开启"
         val observer = if (value.optJSONObject("observer")?.optBoolean("observerReady") == true) "观察器就绪" else "观察器未就绪"
-        status.text = "$phase · ${value.optString("detail")} ${if (all > 0) "$done/$all" else ""}\n$protection · $observer"
-        progress.visibility = if (phase in setOf("connecting", "preparing", "copying", "unpacking", "verifying", "starting", "checking")) View.VISIBLE else View.GONE
-        progress.isIndeterminate = all <= 0
-        if (all > 0) { progress.max = all; progress.progress = done }
+        panelStatus?.text = "$phase · ${value.optString("detail")} ${if (all > 0) "$done/$all" else ""}\n$protection · $observer"
+        panelProgress?.apply {
+            visibility = if (phase in setOf("connecting", "preparing", "copying", "unpacking", "verifying", "starting", "checking")) View.VISIBLE else View.GONE
+            isIndeterminate = all <= 0
+            if (all > 0) { max = all; progress = done }
+        }
     }
     private fun toggleProtection() {
         if (BackgroundProtectionService.running) {
@@ -157,7 +221,13 @@ class MainActivity : Activity() {
     fun notice(text: String) { Toast.makeText(this, text, Toast.LENGTH_LONG).show() }
     override fun onStart() { super.onStart(); SessionController.activityVisibility(true) }
     override fun onStop() { SessionController.activityVisibility(false); super.onStop() }
-    override fun onSaveInstanceState(outState: Bundle) { outState.putBoolean("pendingProtection", pendingProtection); super.onSaveInstanceState(outState) }
-    override fun onDestroy() { SessionController.detach(this); super.onDestroy() }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("pendingProtection", pendingProtection)
+        outState.putBoolean("controlsOpen", controlsOpen)
+        val anchor = launcher.anchor()
+        outState.putBoolean("dockRight", anchor.right); outState.putFloat("dockFraction", anchor.fraction)
+        super.onSaveInstanceState(outState)
+    }
+    override fun onDestroy() { closeControls(); SessionController.detach(this); super.onDestroy() }
     companion object { private const val OPEN_FILE = 101; private const val NOTIFICATION_PERMISSION = 102 }
 }

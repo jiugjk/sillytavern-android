@@ -5,6 +5,8 @@ import android.content.Intent
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -16,10 +18,10 @@ class AppSmokeTest {
     @Test fun officialServerAndWebViewReachTheChatUi() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
-        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        var activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         var latest = JSONObject()
         try {
-            instrumentation.runOnMainSync { SessionController.start() }
+            instrumentation.runOnMainSync { activity.closeControls(); SessionController.start() }
             val deadline = SystemClock.elapsedRealtime() + 240_000
             while (true) {
                 instrumentation.runOnMainSync { latest = SessionController.diagnostic() }
@@ -34,6 +36,29 @@ class AppSmokeTest {
             assertEquals(5, server.getJSONObject("health").getJSONArray("tests").length())
             assertEquals("android", latest.getJSONObject("node-info.json").getString("platform"))
             assertEquals("arm64", latest.getJSONObject("node-info.json").getString("arch"))
+            val previousActivity = activity
+            var previousBrowser: android.view.View? = null
+            val previousPid = latest.getJSONObject("node-info.json").getInt("pid")
+            instrumentation.runOnMainSync {
+                previousBrowser = activity.findViewById<LauncherLayout>(R.id.launcher_root).browserHost.getChildAt(0)
+                activity.recreate()
+            }
+            val recreateDeadline = SystemClock.elapsedRealtime() + 15000
+            while (activity === previousActivity) {
+                instrumentation.runOnMainSync {
+                    ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<MainActivity>().firstOrNull { it !== previousActivity }?.let { activity = it }
+                }
+                assertTrue("Activity recreation timed out", SystemClock.elapsedRealtime() < recreateDeadline)
+                Thread.sleep(100)
+            }
+            instrumentation.runOnMainSync {
+                val layout = activity.findViewById<LauncherLayout>(R.id.launcher_root)
+                assertSame(previousBrowser, layout.browserHost.getChildAt(0))
+                latest = SessionController.diagnostic()
+            }
+            assertEquals(previousPid, latest.getJSONObject("node-info.json").getInt("pid"))
+            latest.put("webViewReusedAfterRecreate", true)
             // Check notification permission, foreground transitions and idle CPU state.
             android.os.ParcelFileDescriptor.AutoCloseInputStream(
                 instrumentation.uiAutomation.executeShellCommand("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")

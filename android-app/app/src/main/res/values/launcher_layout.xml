@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="launcher_controls">向内滑动展开工具栏</string>
+    <string name="launcher_panel_title">控制面板</string>
+    <string name="launcher_panel_close">收起</string>
+    <string name="launcher_open_controls">从屏幕边缘的竖条向内滑动打开工具栏</string>
+    <item name="launcher_root" type="id" />
+    <item name="launcher_browser_host" type="id" />
+    <item name="launcher_empty_text" type="id" />
+    <item name="launcher_controls_button" type="id" />
+    <item name="launcher_controls_overlay" type="id" />
+    <item name="launcher_controls_sheet" type="id" />
+    <item name="launcher_panel_status" type="id" />
+    <item name="launcher_panel_progress" type="id" />
+</resources>

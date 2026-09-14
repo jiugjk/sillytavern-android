@@ -1,13 +1,14 @@
 # 实施状态
 
-## 当前任务：P0 应用图标
+## 当前任务：P1 全区域WebView
 
-- 交付 `build/releases/sillytavern-android-0.3.0-p0.apk`，版本0.3.0 / versionCode 3。
-- 来源：ST `public/img/logo.svg`，背景沿用`apple-icon-512x512.png`。
-- 已完成七档mipmap、自适应前景/背景与monochrome、最近任务、通知小图标/彩色大图标。
-- 按用户统一要求清理启动器同类文案/注释，保留版权和许可证原文；未改ST源码，未实施P1/P2。
-- 图标6项、App JVM14项、Python28项、Node32项通过；APK静态资源/签名/对齐检查通过。设备图标测试已编译，等用户确认实际显示。
-- 文件与原因、素材指纹：`docs/p0-icons.md`。
+- P0图标已获用户确认；P1用户选定方案B（悬浮按钮+面板）。
+- 当前交付 `build/releases/sillytavern-android-0.4.1-p1.apk`，版本0.4.1 / versionCode 5。
+- 按截图反馈修正透明状态栏下的应用白色背景，保留系统栏空间并改深色底色。
+- 入口改为贴边小竖条，向内滑动展开面板、上下调整位置；IME显示和动画期间隐藏，面板不挤压WebView。
+- 系统栏、刘海、键盘边距统一处理；Activity重建复用已有WebView。没有改ST或SessionController，没有新增UI依赖。
+- App JVM24项、Python28项、Node32项通过；APK静态检查通过。设备端背景、贴边、内滑、IME和重建测试已编译，当前无ADB设备。
+- 文件与原因、验收步骤：`docs/p1-fullscreen.md`。P2未开始，等待P1确认。
 
 ## 先前阶段记录（方案A）
 

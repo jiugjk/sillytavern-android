@@ -1,10 +1,10 @@
 # SillyTavern Android 启动器
 
-## 当前任务：P0 图标
+## 当前任务：P1 全区域WebView（方案B）
 
-当前交付：`build/releases/sillytavern-android-0.3.0-p0.apk`。已接入ST官方SVG图标的七档mipmap、自适应/主题图标、最近任务和通知图标，并按统一要求清理启动器文案。图标来源、文件列表和验证命令见 [P0记录](docs/p0-icons.md)。
+P0已获用户确认。当前交付：`build/releases/sillytavern-android-0.4.1-p1.apk`。ST占满系统安全区域；控制入口为贴边小竖条，向内滑动展开、上下调整位置，键盘弹出时隐藏。窗口背景改为深色，修正透明状态栏下露出的白色底色。改动文件、原因和验证命令见 [P1记录](docs/p1-fullscreen.md)；图标来源保留于 [P0记录](docs/p0-icons.md)。
 
-本轮不实施P1/P2；等待用户确认P0后，先给P1两种方案再动手。
+本轮只做P1，不实施P2；等待用户确认P1后再继续。
 
 以下保留既有构建与阶段记录。
 
