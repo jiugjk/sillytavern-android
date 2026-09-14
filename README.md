@@ -18,6 +18,7 @@ P0已获用户确认。当前交付：`build/releases/sillytavern-android-0.4.1-
 
 - 需求/总计划：[docs/decisions.md](docs/decisions.md)、[docs/plan.md](docs/plan.md)
 - 当前实测状态：[docs/status.md](docs/status.md)
+- CI构建与发布：[docs/ci-release.md](docs/ci-release.md)
 - 上游：官方 `upstream/SillyTavern` submodule，固定commit，**无ST源码修改**。
 - Node：官方26.8.2源码构建为`libnode.so`；来源、校验和、工具链见`upstream.lock.json`。
 - 所有适配位于外层。Node构建补丁及已知配置差异见[patches/README.md](patches/README.md)。
@@ -32,6 +33,17 @@ python3 tools/app/verify.py android-app/app/build/outputs/apk/debug/app-debug.ap
 ```
 
 App包名`dev.stshell.app`，与探针并存；当前约244MiB，建议留1.5GiB以上空间。点击“诊断”可复制不含密钥/聊天的活动、前台服务、唤醒锁和HTTP请求状态，必要时再人工检查“启动日志”。不是正式可交付或已验证后台可靠性的版本。
+
+## 0.1 GitHub Actions构建（手动触发）
+
+Actions里的 **Android APK** 工作流手动触发，可选只出`release`或`debug`，按`patch/minor/major`推进
+`android-app/version.properties`并把版本提交回当前分支，随后把APK发到Releases。Node交叉编译产物与
+ST payload分别缓存，命中缓存时整条流水线只需十几到几十分钟；首次或改动Node锁/补丁时要完整重编Node。
+
+release签名来自仓库secrets（`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、
+`ANDROID_KEY_PASSWORD`）；用`bash tools/ci/make_signing_key.sh`在本机生成keystore再上传，
+密钥不进仓库。缺密钥时release包保持未签名，此时工作流拒绝发布Release。参数、缓存与校验范围见
+[docs/ci-release.md](docs/ci-release.md)。CI只做静态校验，不代表设备验收。
 
 后台保护默认关闭、需前台用户主动开启；通知持续整个被保护会话（含空闲），CPU锁按工作释放。现有已提交配置包含`allowKeysExposure=true`和关闭聊天自动备份，本轮保留未擅改；请只使用测试数据和临时凭据。
 

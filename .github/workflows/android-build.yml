@@ -1,0 +1,377 @@
+name: Android APK
+
+# Manual only: a cold run cross-compiles Node 26 for arm64 and can take hours.
+# Every expensive stage is cached, so later runs reuse libnode.so and the ST payload.
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: Which APKs to build
+        type: choice
+        options: [both, release, debug]
+        default: both
+      version_bump:
+        description: How to advance android-app/version.properties
+        type: choice
+        options: [patch, minor, major, none]
+        default: patch
+      version_name:
+        description: Exact versionName (overrides version_bump; MAJOR.MINOR.PATCH)
+        type: string
+        default: ''
+      publish_release:
+        description: Publish the APKs to GitHub Releases
+        type: boolean
+        default: true
+      prerelease:
+        description: Mark the GitHub Release as a pre-release
+        type: boolean
+        default: true
+      run_checks:
+        description: Run unit tests and Android lint before packaging
+        type: boolean
+        default: true
+      runtime_runner:
+        description: Runner label for the Node cross-build (use a bigger runner if the 6h limit is tight)
+        type: string
+        default: ubuntu-latest
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    name: Resolve cache keys
+    runs-on: ubuntu-latest
+    outputs:
+      runtime-key: ${{ steps.keys.outputs.runtime }}
+      payload-key: ${{ steps.keys.outputs.payload }}
+      node-version: ${{ steps.keys.outputs.node }}
+      npm-version: ${{ steps.keys.outputs.npm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute keys and pinned tool versions
+        id: keys
+        run: |
+          set -euo pipefail
+          # libnode.so only changes with the Node pin, the patches or the recipe.
+          echo "runtime=node-runtime-v1-${{ hashFiles('upstream.lock.json', 'patches/node-runtime/*.patch', 'tools/build_node.py', 'tools/runtime_common.py') }}" >> "$GITHUB_OUTPUT"
+          # The payload only changes with the ST pin, the policies or the shell adaptation.
+          echo "payload=st-payload-v1-${{ hashFiles('upstream.lock.json', 'config/payload-policy.json', 'config/mobile-policy.json', 'tools/payload/*.py', 'runtime/mobile/*.mjs') }}" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          print('node=' + json.load(open('upstream.lock.json'))['node']['version'])
+          print('npm=' + json.load(open('config/payload-policy.json'))['npmVersion'])
+          PY
+
+  runtime:
+    name: Node runtime (libnode.so)
+    needs: plan
+    runs-on: ${{ inputs.runtime_runner }}
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore runtime cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/runtime
+          key: ${{ needs.plan.outputs.runtime-key }}
+          lookup-only: true
+
+      - name: Free disk space
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift \
+                      /usr/local/share/powershell /usr/local/lib/android/sdk/ndk || true
+          df -h /
+
+      - name: Install host build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          # Linux mksnapshot links against the real host GCC libatomic.
+          sudo apt-get install -y --no-install-recommends g++ libatomic1
+          g++ --version | head -1
+          g++ -print-file-name=libatomic.so
+
+      - uses: ./.github/actions/android-toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+
+      - name: Cross-build Node for android-arm64
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          python3 tools/build_node.py --jobs "$(nproc)" 2>&1 | tee build/node-build.log
+          python3 tools/verify_runtime_artifacts.py
+
+      - name: Save runtime cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/runtime
+          key: ${{ needs.plan.outputs.runtime-key }}
+
+      - name: Upload Node build log
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-build-log
+          path: build/node-build.log
+          if-no-files-found: ignore
+
+  payload:
+    name: SillyTavern payload
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore payload cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/payload
+          key: ${{ needs.plan.outputs.payload-key }}
+          lookup-only: true
+
+      - uses: ./.github/actions/android-toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          android-sdk: 'false'
+          node-version: ${{ needs.plan.outputs.node-version }}
+          npm-version: ${{ needs.plan.outputs.npm-version }}
+
+      - name: Cache npm downloads
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('upstream.lock.json') }}
+          restore-keys: npm-
+
+      - name: Build and verify the payload
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          python3 tools/payload/prepare.py
+          python3 tools/payload/verify.py
+
+      - name: Save payload cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/payload
+          key: ${{ needs.plan.outputs.payload-key }}
+
+  apk:
+    name: Build APKs
+    needs: [plan, runtime, payload]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift \
+                      /usr/local/share/powershell || true
+          df -h /
+
+      - uses: ./.github/actions/android-toolchain
+
+      - name: Restore Node runtime
+        uses: actions/cache/restore@v4
+        with:
+          path: build/runtime
+          key: ${{ needs.plan.outputs.runtime-key }}
+          fail-on-cache-miss: true
+
+      - name: Restore SillyTavern payload
+        uses: actions/cache/restore@v4
+        with:
+          path: build/payload
+          key: ${{ needs.plan.outputs.payload-key }}
+          fail-on-cache-miss: true
+
+      - name: Set up Gradle with build cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: android-app
+          validate-wrappers: true
+
+      - name: Advance version
+        id: version
+        env:
+          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_BUMP: ${{ inputs.version_bump }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VERSION_NAME" ]; then
+            python3 tools/ci/bump_version.py --version-name "$VERSION_NAME"
+          else
+            python3 tools/ci/bump_version.py --bump "$VERSION_BUMP"
+          fi
+
+      - name: Decode release keystore
+        id: signing
+        if: inputs.build_type != 'debug' && secrets.ANDROID_KEYSTORE_BASE64 != ''
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/release.keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$keystore"
+          if [ ! -s "$keystore" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 did not decode to a keystore file." >&2
+            exit 1
+          fi
+          echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit tests and lint
+        if: inputs.run_checks
+        working-directory: android-app
+        run: ./gradlew --build-cache --no-daemon :app:testDebugUnitTest :app:lintDebug
+
+      - name: Assemble debug APK
+        if: inputs.build_type != 'release'
+        working-directory: android-app
+        run: ./gradlew --build-cache --no-daemon :app:assembleDebug
+
+      - name: Assemble release APK
+        if: inputs.build_type != 'debug'
+        working-directory: android-app
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --build-cache --no-daemon :app:assembleRelease
+
+      - name: Verify debug APK
+        if: inputs.build_type != 'release'
+        run: python3 tools/app/verify.py android-app/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Verify release signature and alignment
+        if: inputs.build_type != 'debug' && steps.signing.outputs.signed == 'true'
+        run: |
+          set -euo pipefail
+          apk=android-app/app/build/outputs/apk/release/app-release.apk
+          apksigner verify --verbose --print-certs "$apk"
+          zipalign -c -P 16 -v 4 "$apk" > /dev/null
+          echo "Release APK is signed and 16 KB aligned."
+
+      - name: Collect APKs
+        id: collect
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.versionName }}"
+          mkdir -p dist
+          debug=android-app/app/build/outputs/apk/debug/app-debug.apk
+          if [ -f "$debug" ]; then
+            cp "$debug" "dist/sillytavern-android-${version}-debug.apk"
+          fi
+          for candidate in app-release.apk app-release-unsigned.apk; do
+            release="android-app/app/build/outputs/apk/release/$candidate"
+            if [ -f "$release" ]; then
+              suffix=release
+              if [ "$candidate" = app-release-unsigned.apk ]; then suffix=release-unsigned; fi
+              cp "$release" "dist/sillytavern-android-${version}-${suffix}.apk"
+              break
+            fi
+          done
+          ( cd dist && sha256sum ./*.apk > SHA256SUMS.txt )
+          cat dist/SHA256SUMS.txt
+          contract=build/app-inputs/assets/app-contract.json
+          echo "appIdentity=$(python3 -c "import json;print(json.load(open('$contract'))['appIdentity'])")" >> "$GITHUB_OUTPUT"
+          echo "payloadId=$(python3 -c "import json;print(json.load(open('build/payload/current.json'))['payloadId'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sillytavern-android-${{ steps.version.outputs.versionName }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Refuse to publish an unsigned release APK
+        if: inputs.publish_release && inputs.build_type != 'debug' && steps.signing.outputs.signed != 'true'
+        run: |
+          echo "A release APK without a signature cannot be installed." >&2
+          echo "Set ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS /" >&2
+          echo "ANDROID_KEY_PASSWORD (see docs/ci-release.md), or re-run with publish_release=false." >&2
+          exit 1
+
+      - name: Commit the version bump
+        id: commit
+        if: steps.version.outputs.changed == 'true' && github.ref_type == 'branch'
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android-app/version.properties
+          git commit -m "chore(release): ${{ steps.version.outputs.versionName }} (versionCode ${{ steps.version.outputs.versionCode }})"
+          for delay in 2 4 8 16 0; do
+            if git push origin "HEAD:$BRANCH"; then break; fi
+            if [ "$delay" -eq 0 ]; then exit 1; fi
+            sleep "$delay"
+            git pull --rebase origin "$BRANCH"
+          done
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        if: inputs.publish_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.versionName }}"
+          code="${{ steps.version.outputs.versionCode }}"
+          target="${{ steps.commit.outputs.sha || github.sha }}"
+          tag="v${version}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
+            tag="v${version}-build${code}"
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
+            tag="v${version}-build${code}-${{ github.run_number }}"
+          fi
+          {
+            echo "非官方 SillyTavern Android 壳工程构建（arm64-v8a，Android 14+）。"
+            echo
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| versionName | \`${version}\` |"
+            echo "| versionCode | \`${code}\` |"
+            echo "| 源码 commit | \`${target}\` |"
+            echo "| appIdentity | \`${{ steps.collect.outputs.appIdentity }}\` |"
+            echo "| payloadId | \`${{ steps.collect.outputs.payloadId }}\` |"
+            echo
+            echo '### SHA256'
+            echo '```'
+            cat dist/SHA256SUMS.txt
+            echo '```'
+            echo
+            echo "调试包带 \`debuggable\` 标记，仅供排查；日常安装请用 release 包。首次安装或更换签名密钥后需要先卸载旧版本。"
+          } > dist/release-notes.md
+          gh release create "$tag" \
+            --target "$target" \
+            --title "SillyTavern Android ${version}" \
+            --notes-file dist/release-notes.md \
+            ${{ inputs.prerelease && '--prerelease' || '' }} \
+            dist/*.apk dist/SHA256SUMS.txt
+          echo "Published $tag" >> "$GITHUB_STEP_SUMMARY"

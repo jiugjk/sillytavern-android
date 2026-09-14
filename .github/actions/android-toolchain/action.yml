@@ -1,0 +1,69 @@
+name: Android toolchain
+description: JDK, Python and the exact Android SDK/NDK/CMake pinned by upstream.lock.json.
+
+inputs:
+  android-sdk:
+    description: Install the Android SDK packages (NDK, CMake, platform, build-tools).
+    default: 'true'
+  node-version:
+    description: Node version to install; empty skips Node entirely.
+    default: ''
+  npm-version:
+    description: Exact npm version to pin; empty keeps the one bundled with Node.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Read pinned tool versions
+      shell: bash
+      run: |
+        python3 - <<'PY' >> "$GITHUB_ENV"
+        import json
+        android = json.load(open('upstream.lock.json'))['android']
+        for key in ('ndkVersion', 'cmakeVersion', 'buildToolsVersion', 'compileSdk'):
+            print(f'ST_{key.upper()}={android[key]}')
+        PY
+
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '21'
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - uses: actions/setup-node@v4
+      if: inputs.node-version != ''
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Pin npm
+      if: inputs.node-version != '' && inputs.npm-version != ''
+      shell: bash
+      run: |
+        if [ "$(npm --version)" != "${{ inputs.npm-version }}" ]; then
+          npm install -g "npm@${{ inputs.npm-version }}"
+        fi
+        node --version && npm --version
+
+    - name: Install pinned Android SDK packages
+      if: inputs.android-sdk == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK not found on this runner}}"
+        # SIGPIPE on `yes` must not trip pipefail once sdkmanager stops reading.
+        yes 2>/dev/null | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+        "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+          "ndk;${ST_NDKVERSION}" \
+          "cmake;${ST_CMAKEVERSION}" \
+          "platforms;android-${ST_COMPILESDK}" \
+          "build-tools;${ST_BUILDTOOLSVERSION}"
+        {
+          echo "ANDROID_HOME=$SDK"
+          echo "ANDROID_SDK_ROOT=$SDK"
+          echo "ANDROID_NDK_HOME=$SDK/ndk/${ST_NDKVERSION}"
+        } >> "$GITHUB_ENV"
+        echo "$SDK/build-tools/${ST_BUILDTOOLSVERSION}" >> "$GITHUB_PATH"
