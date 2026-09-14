@@ -17,7 +17,8 @@ def contract():
     paths.update((ROOT / 'runtime/android').glob('*.mjs'))
     paths.update((ROOT / 'runtime/android').glob('*.js'))
     paths.update(ROOT / p for p in ['upstream.lock.json', 'tools/icons/manifest.json', 'android-app/settings.gradle.kts',
-        'android-app/build.gradle.kts', 'android-app/gradle.properties', 'android-app/app/build.gradle.kts',
+        'android-app/build.gradle.kts', 'android-app/gradle.properties', 'android-app/version.properties',
+        'android-app/app/build.gradle.kts',
         'android/runtime-probe/src/main/java/dev/stshell/probe/NativeNode.kt',
         'android/runtime-probe/src/main/cpp/CMakeLists.txt', 'android/runtime-probe/src/main/cpp/node_bridge.cpp'])
     inputs = {p.relative_to(ROOT).as_posix(): sha256(p) for p in sorted(paths) if p.is_file()}

@@ -1,4 +1,16 @@
+import java.util.Properties
+
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
+
+val versionProperties = Properties().apply {
+    rootProject.file("version.properties").inputStream().use { stream -> load(stream) }
+}
+val appVersionCode = (versionProperties.getProperty("versionCode") ?: error("Missing versionCode in version.properties")).trim().toInt()
+val appVersionName = (versionProperties.getProperty("versionName") ?: error("Missing versionName in version.properties")).trim()
+// CI injects the release keystore from repository secrets; a local build without
+// them still assembles, then stays unsigned instead of using a throwaway key.
+fun signingEnv(name: String) = providers.environmentVariable(name).orNull
+val releaseKeystore = signingEnv("ANDROID_KEYSTORE_PATH")?.let { rootProject.file(it) }?.takeIf { it.isFile }
 val shellRoot = rootProject.projectDir.parentFile
 val runtimeDir = shellRoot.resolve("build/runtime")
 val staged = shellRoot.resolve("build/app-inputs")
@@ -20,8 +32,8 @@ android {
         applicationId = "dev.stshell.app"
         minSdk = 34
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.4.1"
+        versionCode = appVersionCode
+        versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += listOf("-DNODE_ARTIFACT_DIR=${runtimeDir.absolutePath}", "-DANDROID_STL=c++_shared") } }
@@ -37,7 +49,20 @@ android {
         }
     }
     androidResources { noCompress += "zip" }
-    buildTypes { debug { isDebuggable = true }; release { isMinifyEnabled = false } }
+    signingConfigs {
+        if (releaseKeystore != null) create("release") {
+            storeFile = releaseKeystore
+            storePassword = signingEnv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias = signingEnv("ANDROID_KEY_ALIAS")
+            keyPassword = signingEnv("ANDROID_KEY_PASSWORD")
+            // minSdk 34 only needs the APK Signature Scheme; no legacy JAR signature.
+            enableV1Signing = false; enableV2Signing = true; enableV3Signing = true
+        }
+    }
+    buildTypes {
+        debug { isDebuggable = true }
+        release { isMinifyEnabled = false; signingConfig = signingConfigs.findByName("release") }
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     packaging { jniLibs.useLegacyPackaging = false; jniLibs.keepDebugSymbols += "**/libnode.so" }
 }
