@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ST Node26 自检（非官方）</string>
+    <string name="probe_title">M1 / Node26 Android 运行时自检</string>
+    <string name="probe_notice">这还不是酒馆聊天 App。请保持此页面在前台；诊断会访问 nodejs.org 检查 DNS/HTTPS，不发送用户聊天或密钥。</string>
+    <string name="device_info">当前设备：Android %1$s / API %2$d\n%3$s / %4$d KB 系统页</string>
+    <string name="device_unknown">无法读取设备信息：%1$s</string>
+    <string name="run_self_test">开始完整自检（自动两轮）</string>
+    <string name="cancel_diagnostic">取消诊断</string>
+    <string name="copy_report">复制完整汇总 JSON</string>
+    <string name="export_report">保存汇总 JSON 文件</string>
+    <string name="licenses_button">许可证 / 开发说明</string>
+    <string name="licenses_title">许可证</string>
+    <string name="licenses_notice">非官方诊断构建，不是 SillyTavern 正式发行版。源码和构建说明位于随工程提供的 README.md；公开分发须同时提供对应源码，详见 docs/plan.md 第11节。第三方声明保存在 APK 的 assets/licenses/ 中。\n\n</string>
+    <string name="close">关闭</string>
+    <string name="ready_to_start">点击开始。将自动记录系统/页大小、构建指纹，以及两次不同 Node 服务进程的结果。</string>
+    <string name="collecting">正在收集设备信息与构建指纹…</string>
+    <string name="running_status">正在执行第 %1$d / 2 轮，请保持页面可见。</string>
+    <string name="finishing_status">正在整理并保存汇总…</string>
+    <string name="passed_status">本设备两轮自检通过。请点击“复制完整汇总 JSON”发送整个结果，不要只复制其中一轮。</string>
+    <string name="coverage_notice">单设备通过不代表已覆盖4KB与16KB两类设备，也不代表酒馆或后台生成已通过。</string>
+    <string name="failed_status">诊断失败，可复制或保存下面的完整结果以便排查。</string>
+    <string name="cancelled_status">诊断已取消；部分结果不能作为通过证据。</string>
+    <string name="stale_status">下面是旧版本的历史结果，请重新运行本版本自检。</string>
+    <string name="device_changed">这是历史结果，记录的系统或页大小与当前设备不同，请重新自检。历史JSON仍可保存。</string>
+    <string name="interrupted_status">上次自检已中断，部分结果不能算通过。请重新自检；若旧服务仍在运行，先强行停止此探针。</string>
+    <string name="restart_required">旧Node进程退出未确认。请在系统应用信息中“强行停止”此探针，再重新打开；不要据此判断测试通过。</string>
+    <string name="read_error">无法读取旧报告，请重新自检：%1$s</string>
+    <string name="action_error">操作失败：%1$s</string>
+    <string name="copied">完整汇总已复制</string>
+    <string name="saved">汇总文件已保存</string>
+    <string name="no_report">尚无完成的诊断报告</string>
+    <string name="cancel_requested">正在取消诊断</string>
+    <string name="clipboard_label">ST runtime probe report</string>
+</resources>

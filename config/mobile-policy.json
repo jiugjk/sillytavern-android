@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "config": {
+    "listen": true,
+    "listenAddress": {"ipv4": "127.0.0.1", "ipv6": "[::1]"},
+    "protocol": {"ipv4": true, "ipv6": false},
+    "browserLaunch": {"enabled": false, "hostname": "auto", "port": -1},
+    "ssl": {"enabled": false},
+    "whitelistMode": true,
+    "whitelist": ["127.0.0.1", "::1"],
+    "whitelistDockerHosts": false,
+    "enableForwardedWhitelist": false,
+    "forwardedHeaders": {"xRealIp": false, "xForwardedFor": false, "cfConnectingIp": false},
+    "basicAuthMode": true,
+    "perUserBasicAuth": false,
+    "disableCsrfProtection": false,
+    "securityOverride": false,
+    "enableCorsProxy": false,
+    "cors": {"enabled": false},
+    "hostWhitelist": {"enabled": true, "hosts": [], "scan": true},
+    "sso": {"autheliaAuth": false, "authentikAuth": false},
+    "extensions": {"autoUpdate": false, "models": {"autoDownload": false}},
+    "enableServerPlugins": false,
+    "enableServerPluginsAutoUpdate": false,
+    "git": {"backend": "builtin"},
+    "allowKeysExposure": true,
+    "performance": {"lazyLoadCharacters": true, "useDiskCache": false},
+    "backups": {"chat": {"enabled": false}}
+  },
+  "limitations": [
+    "No local transformer model inference is provided. autoDownload=false does not remove local-provider UI or disable inference endpoints.",
+    "Builtin git only covers extension clone, not system-git update/version/branch operations.",
+    "No generation timeout is introduced by this policy. Remote API settings remain owned by SillyTavern."
+  ]
+}

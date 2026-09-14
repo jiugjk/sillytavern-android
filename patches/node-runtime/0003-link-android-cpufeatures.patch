@@ -1,0 +1,14 @@
+diff --git a/deps/zlib/zlib.gyp b/deps/zlib/zlib.gyp
+--- a/deps/zlib/zlib.gyp
++++ b/deps/zlib/zlib.gyp
+@@ -183,6 +183,10 @@
+             'include_dirs': [ '<(ZLIB_ROOT)' ],
+           },
+           'conditions': [
++            ['OS=="android" and _toolset=="target"', {
++              'sources': [ '<(ZLIB_ROOT)/android-cpufeatures/cpu-features.c' ],
++              'include_dirs': [ '<(ZLIB_ROOT)/android-cpufeatures' ],
++            }],
+             ['OS!="win"', {
+               'cflags!': [ '-ansi' ],
+               'cflags': [ '-Wno-implicit-fallthrough' ],

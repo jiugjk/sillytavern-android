@@ -1,0 +1,26 @@
+diff --git a/tools/v8_gypfiles/v8.gyp b/tools/v8_gypfiles/v8.gyp
+--- a/tools/v8_gypfiles/v8.gyp
++++ b/tools/v8_gypfiles/v8.gyp
+@@ -1243,6 +1243,13 @@
+           'conditions': [
+             ['v8_enable_webassembly==1', {
+               'conditions': [
++                ['OS=="android" and _toolset=="host" and host_os=="linux" and host_arch=="x64"', {
++                  'sources': [
++                    '<(V8_ROOT)/src/trap-handler/handler-inside-posix.cc',
++                    '<(V8_ROOT)/src/trap-handler/handler-outside-posix.cc',
++                    '<(V8_ROOT)/src/trap-handler/handler-outside-simulator.cc',
++                  ],
++                }],
+                 ['((_toolset=="host" and host_arch=="arm64" or _toolset=="target" and target_arch=="arm64") and (OS in "linux mac ios openharmony")) or ((_toolset=="host" and host_arch=="x64" or _toolset=="target" and target_arch=="x64") and (OS in "linux mac openharmony"))', {
+                   'sources': [
+                     '<(V8_ROOT)/src/trap-handler/handler-inside-posix.cc',
+@@ -1386,7 +1393,7 @@
+         # Platforms that don't have Compare-And-Swap (CAS) support need to link atomic library
+         # to implement atomic memory access.
+         # Clang needs it for some atomic operations (https://clang.llvm.org/docs/Toolchain.html#atomics-library).
+-        ['(OS=="linux" and clang==1) or (v8_current_cpu in ["mips64", "mips64el", "arm", "riscv64", "loong64"])', {
++        ['((OS=="linux" or OS=="android") and clang==1) or (v8_current_cpu in ["mips64", "mips64el", "arm", "riscv64", "loong64"])', {
+           'link_settings': {
+             'libraries': ['-latomic', ],
+           },

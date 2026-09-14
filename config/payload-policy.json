@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "npmVersion": "11.19.1",
+  "archiveFormat": "zip",
+  "compressionLevel": 6,
+  "maxEntries": 60000,
+  "maxFileBytes": 134217728,
+  "maxTotalBytes": 1073741824,
+  "emptyDirectories": ["server/backups"],
+  "requiredFiles": [
+    "server/server.js",
+    "server/package.json",
+    "server/package-lock.json",
+    "server/default/config.yaml",
+    "server/public/index.html",
+    "server/public/lib.js",
+    "server/src/fetch-patch.js",
+    "server/node_modules/tiktoken/tiktoken_bg.wasm",
+    "server/node_modules/tiktoken/lite/tiktoken_bg.wasm",
+    "server/node_modules/@agnai/sentencepiece-js/dist/index.js",
+    "server/node_modules/@agnai/web-tokenizers/lib/index.js",
+    "server/node_modules/sillytavern-transformers/src/transformers.js",
+    "server/node_modules/sillytavern-transformers/dist/ort-wasm.wasm",
+    "server/node_modules/sillytavern-transformers/dist/ort-wasm-simd.wasm",
+    "server/node_modules/@jsquash/png/codec/pkg/squoosh_png_bg.wasm",
+    "shell/bootstrap.mjs",
+    "shell/policy.mjs",
+    "shell/mobile-policy.json",
+    "dependency-inventory.json"
+  ]
+}

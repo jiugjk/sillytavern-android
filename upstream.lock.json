@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "sillytavern": {
+    "url": "https://github.com/SillyTavern/SillyTavern.git",
+    "commit": "c0a417b240c640037bab69529aa1e0c466c69397",
+    "packageLockSha256": "7484f87e7dc6e99044ad532b80111c3e93463aaf1d5dbe377b3a4486bfe65f6f"
+  },
+  "node": {
+    "version": "26.8.2",
+    "url": "https://nodejs.org/dist/v26.8.2/node-v26.8.2.tar.xz",
+    "sha256": "36b37bf5ee4d092b9d9dff2d1a90b1444f8b453eddf6ff96cabdebb97d32f41d",
+    "configureArgs": ["--dest-cpu=arm64", "--dest-os=android", "--shared", "--without-npm", "--cross-compiling", "--openssl-no-asm", "--v8-disable-temporal-support", "--ninja"],
+    "patches": [
+      {"path": "patches/node-runtime/0001-separate-host-generated-files.patch", "sha256": "bee3d5cedc81dcae78eecff8975ac3d23d9ec8117293a81158918192d6f7f8df"},
+      {"path": "patches/node-runtime/0002-android-cross-host-link.patch", "sha256": "130061d368556886191cd015d239559872069f8c5a75d53be810a2524397a1c0"},
+      {"path": "patches/node-runtime/0003-link-android-cpufeatures.patch", "sha256": "f27128778ff4e7f913c170aa785a56f62c37ad13a5c5bc867ee89f145be46b78"}
+    ]
+  },
+  "android": {
+    "minSdk": 34,
+    "compileSdk": 36,
+    "targetSdk": 36,
+    "abi": "arm64-v8a",
+    "ndkVersion": "30.0.16248370",
+    "ndkCpuFeaturesInputs": {
+      "cpu-features.c": "1b8a88eb7d3a5437d17e12475539398d3e1c5eef13d85941679841254af0a8f5",
+      "cpu-features.h": "f4989fabece7ea538e3c1272dca47f8a9a4423a87c79a1344a2611e884cb7319",
+      "NOTICE": "c870d52f42a8f93023b99a85fe68d02637d6b04e5f35bbcd7f98759adb4e4d49"
+    },
+    "cmakeVersion": "3.22.1",
+    "buildToolsVersion": "35.0.0",
+    "agpVersion": "8.13.2",
+    "kotlinVersion": "2.3.21",
+    "gradleVersion": "8.13",
+    "gradleDistributionSha256": "20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78",
+    "gradleWrapperJarSha256": "81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f"
+  }
+}
