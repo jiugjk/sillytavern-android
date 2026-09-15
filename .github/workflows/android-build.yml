@@ -53,7 +53,7 @@ jobs:
       node-version: ${{ steps.keys.outputs.node }}
       npm-version: ${{ steps.keys.outputs.npm }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Compute keys and pinned tool versions
         id: keys
@@ -75,11 +75,11 @@ jobs:
     runs-on: ${{ (github.actor == 'jiugjk' && github.repository_owner == 'jiugjk') && fromJSON('["self-hosted", "fast-tmpfs"]') || inputs.runtime_runner }}
     timeout-minutes: 350
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Restore runtime cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6.1.0
         with:
           path: build/runtime
           key: ${{ needs.plan.outputs.runtime-key }}
@@ -116,14 +116,14 @@ jobs:
 
       - name: Save runtime cache
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6.1.0
         with:
           path: build/runtime
           key: ${{ needs.plan.outputs.runtime-key }}
 
       - name: Upload Node build log
         if: always() && steps.cache.outputs.cache-hit != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: node-build-log
           path: build/node-build.log
@@ -135,13 +135,13 @@ jobs:
     runs-on: ${{ (github.actor == 'jiugjk' && github.repository_owner == 'jiugjk') && fromJSON('["self-hosted", "fast-tmpfs"]') || 'ubuntu-latest' }}
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
 
       - name: Restore payload cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6.1.0
         with:
           path: build/payload
           key: ${{ needs.plan.outputs.payload-key }}
@@ -156,7 +156,7 @@ jobs:
 
       - name: Cache npm downloads
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.npm
           key: npm-${{ hashFiles('upstream.lock.json') }}
@@ -171,7 +171,7 @@ jobs:
 
       - name: Save payload cache
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6.1.0
         with:
           path: build/payload
           key: ${{ needs.plan.outputs.payload-key }}
@@ -182,7 +182,7 @@ jobs:
     runs-on: ${{ (github.actor == 'jiugjk' && github.repository_owner == 'jiugjk') && fromJSON('["self-hosted", "fast-tmpfs"]') || 'ubuntu-latest' }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
@@ -197,23 +197,24 @@ jobs:
       - uses: ./.github/actions/android-toolchain
 
       - name: Restore Node runtime
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6.1.0
         with:
           path: build/runtime
           key: ${{ needs.plan.outputs.runtime-key }}
           fail-on-cache-miss: true
 
       - name: Restore SillyTavern payload
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6.1.0
         with:
           path: build/payload
           key: ${{ needs.plan.outputs.payload-key }}
           fail-on-cache-miss: true
 
       - name: Set up Gradle with build cache
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6.3.0
         with:
-          build-root-directory: android-app
+          # `build-root-directory` was removed in gradle/actions@v4; every Gradle
+          # step already sets `working-directory: android-app` itself.
           validate-wrappers: true
 
       - name: Advance version
@@ -236,6 +237,8 @@ jobs:
         if: inputs.build_type != 'debug'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
           if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
@@ -244,9 +247,21 @@ jobs:
             exit 0
           fi
           keystore="$RUNNER_TEMP/release.keystore"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$keystore"
           if [ ! -s "$keystore" ]; then
             echo "ANDROID_KEYSTORE_BASE64 did not decode to a keystore file." >&2
+            exit 1
+          fi
+          # Fail fast here instead of ~3 minutes later inside :app:packageRelease,
+          # where a bad alias only surfaces as "Failed to read key *** : null".
+          if ! keytool -list -keystore "$keystore" \
+                 -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+                 -alias "$ANDROID_KEY_ALIAS" > /dev/null 2>&1; then
+            echo "::error::Cannot read alias '$ANDROID_KEY_ALIAS' from the keystore." \
+                 "Check the ANDROID_KEY_ALIAS / ANDROID_KEYSTORE_PASSWORD secrets." >&2
+            echo "Aliases present in the keystore:" >&2
+            keytool -list -keystore "$keystore" -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>/dev/null \
+              | grep -i "PrivateKeyEntry" >&2 || true
             exit 1
           fi
           echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
@@ -310,7 +325,7 @@ jobs:
           echo "payloadId=$(python3 -c "import json;print(json.load(open('build/payload/current.json'))['payloadId'])")" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: sillytavern-android-${{ steps.version.outputs.versionName }}
           path: dist/
