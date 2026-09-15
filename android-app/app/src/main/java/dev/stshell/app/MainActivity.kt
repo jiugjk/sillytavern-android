@@ -15,12 +15,12 @@ import android.os.Bundle
 import android.os.PersistableBundle
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowInsets
-import android.view.WindowManager
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import android.webkit.WebView
 import android.widget.*
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
 
 class MainActivity : Activity() {
@@ -35,16 +35,16 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         LauncherBranding.applyTaskIcon(this)
-        // Touch the decor before asking for the insets controller: PhoneWindow's
-        // getInsetsController() is a bare `mDecor.getWindowInsetsController()`, and
-        // mDecor only exists after installDecor(). The NPE is thrown inside the
-        // getter, so the `?.` below cannot defend against it. getDecorView() is what
-        // forces installDecor(); setDecorFitsSystemWindows() does not, because
-        // targetSdk 35+ makes it return early with edge-to-edge already enforced.
-        window.decorView
-        window.insetsController?.setSystemBarsAppearance(0,
-            android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
-        window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS }
+        // WindowCompat.enableEdgeToEdge() installs the decor before touching the
+        // window attributes, which is what keeps the insets controller reachable:
+        // PhoneWindow.getInsetsController() is a bare mDecor.getWindowInsetsController()
+        // and throws inside the getter while mDecor is still null. It also applies
+        // LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS and transparent system bars for us.
+        WindowCompat.enableEdgeToEdge(window)
+        WindowCompat.getInsetsController(window, window.decorView).run {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
         pendingProtection = savedInstanceState?.getBoolean("pendingProtection") ?: false
         val preferences = getSharedPreferences("launcher-ui", MODE_PRIVATE)
         val initialAnchor = try {
@@ -71,7 +71,7 @@ class MainActivity : Activity() {
     }
     fun openControls() {
         if (controlsOpen || isFinishing || isDestroyed) return
-        window.insetsController?.hide(WindowInsets.Type.ime())
+        WindowCompat.getInsetsController(window, window.decorView).hide(WindowInsetsCompat.Type.ime())
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(12), dp(12), dp(12)) }
         val heading = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
         heading.addView(TextView(this).apply { setText(R.string.launcher_panel_title) }, LinearLayout.LayoutParams(0, -2, 1f))
