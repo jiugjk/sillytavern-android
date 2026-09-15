@@ -30,7 +30,24 @@ runs:
         distribution: temurin
         java-version: '21'
 
+    # Self-hosted runners (Oracle Linux) have no prebuilt python-versions
+    # package, so setup-python can only be used as a fallback for the
+    # GitHub-hosted images; a new enough system python is preferred.
+    - name: Look for a usable system Python
+      id: system-python
+      shell: bash
+      run: |
+        set -euo pipefail
+        if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+          echo "usable=true" >> "$GITHUB_OUTPUT"
+          echo "Using the system Python: $(python3 --version) ($(command -v python3))"
+        else
+          echo "usable=false" >> "$GITHUB_OUTPUT"
+          echo "No system Python >= 3.11; falling back to actions/setup-python."
+        fi
+
     - uses: actions/setup-python@v7.0.0
+      if: steps.system-python.outputs.usable != 'true'
       with:
         python-version: '3.12'
 
