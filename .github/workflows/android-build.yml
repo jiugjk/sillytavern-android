@@ -46,7 +46,7 @@ permissions:
 jobs:
   plan:
     name: Resolve cache keys
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.actor == 'jiugjk' && github.repository_owner == 'jiugjk') && fromJSON('["self-hosted", "fast-tmpfs"]') || 'ubuntu-latest' }}
     outputs:
       runtime-key: ${{ steps.keys.outputs.runtime }}
       payload-key: ${{ steps.keys.outputs.payload }}
@@ -72,7 +72,7 @@ jobs:
   runtime:
     name: Node runtime (libnode.so)
     needs: plan
-    runs-on: ${{ inputs.runtime_runner }}
+    runs-on: ${{ (github.actor == 'jiugjk' && github.repository_owner == 'jiugjk') && fromJSON('["self-hosted", "fast-tmpfs"]') || inputs.runtime_runner }}
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
@@ -86,7 +86,7 @@ jobs:
           lookup-only: true
 
       - name: Free disk space
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && runner.environment != 'self-hosted'
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift \
                       /usr/local/share/powershell /usr/local/lib/android/sdk/ndk || true
@@ -95,9 +95,11 @@ jobs:
       - name: Install host build dependencies
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get update
-          # Linux mksnapshot links against the real host GCC libatomic.
-          sudo apt-get install -y --no-install-recommends g++ libatomic1
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            # Linux mksnapshot links against the real host GCC libatomic.
+            sudo apt-get install -y --no-install-recommends g++ libatomic1
+          fi
           g++ --version | head -1
           g++ -print-file-name=libatomic.so
 
@@ -130,7 +132,7 @@ jobs:
   payload:
     name: SillyTavern payload
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.actor == 'jiugjk' && github.repository_owner == 'jiugjk') && fromJSON('["self-hosted", "fast-tmpfs"]') || 'ubuntu-latest' }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -177,7 +179,7 @@ jobs:
   apk:
     name: Build APKs
     needs: [plan, runtime, payload]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.actor == 'jiugjk' && github.repository_owner == 'jiugjk') && fromJSON('["self-hosted", "fast-tmpfs"]') || 'ubuntu-latest' }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -186,6 +188,7 @@ jobs:
           fetch-depth: 0
 
       - name: Free disk space
+        if: runner.environment != 'self-hosted'
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift \
                       /usr/local/share/powershell || true
