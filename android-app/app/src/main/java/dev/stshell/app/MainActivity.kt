@@ -35,7 +35,13 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         LauncherBranding.applyTaskIcon(this)
-        window.setDecorFitsSystemWindows(false)
+        // Touch the decor before asking for the insets controller: PhoneWindow's
+        // getInsetsController() is a bare `mDecor.getWindowInsetsController()`, and
+        // mDecor only exists after installDecor(). The NPE is thrown inside the
+        // getter, so the `?.` below cannot defend against it. getDecorView() is what
+        // forces installDecor(); setDecorFitsSystemWindows() does not, because
+        // targetSdk 35+ makes it return early with edge-to-edge already enforced.
+        window.decorView
         window.insetsController?.setSystemBarsAppearance(0,
             android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
         window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS }
