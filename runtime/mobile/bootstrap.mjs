@@ -30,12 +30,20 @@ function safeName(name) {
     assert(typeof name === 'string' && name && !/[\\:\x00-\x1f]/.test(name), 'Unsafe payload name');
     assert(!name.startsWith('/') && name.split('/').every(part => part && part !== '.' && part !== '..'), 'Unsafe payload path');
 }
-async function verifyTree(root, manifest) {
+function checkManifestShape(manifest) {
     assert.equal(manifest.schemaVersion, 1);
     assert(/^[a-f0-9]{64}$/.test(manifest.payloadId));
     const files = manifest.files;
     assert(files && typeof files === 'object' && !Array.isArray(files));
     assert(Object.keys(files).length <= 60000, 'Payload has too many files');
+    return files;
+}
+/**
+ * Full content verification: hashes every member. Used by the independent host
+ * launch path, where nothing else has vouched for this tree.
+ */
+async function verifyTree(root, manifest) {
+    const files = checkManifestShape(manifest);
     const actual = new Set();
     const visit = async (directory, prefix = '') => {
         for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
@@ -84,8 +92,7 @@ async function main() {
     const manifestBytes = fs.readFileSync(manifestPath);
     assert.equal(digest(manifestBytes), launch.manifestSha256, 'Manifest does not match the trusted launch descriptor');
     const manifest = JSON.parse(manifestBytes);
-    // Android must also verify before executing this JS, at payload installation.
-    // This full diagnostic check favors integrity over startup performance.
+    // Read-only permissions do not attest a prior hash pass. Always verify content.
     await verifyTree(payloadRoot, manifest);
     const proposedState = futureRealPath(launch.stateRoot);
     assert(!under(payloadRoot, proposedState) && !under(proposedState, payloadRoot), 'State and payload must be separate directories');

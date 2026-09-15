@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  User-visible launcher text. Keeping it here (instead of inline in Kotlin)
+  means wording, terminology and placeholders can change without touching
+  business logic, and internal state identifiers never double as display text.
+-->
+<resources>
+    <!-- Control panel actions -->
+    <string name="action_start">启动</string>
+    <string name="action_restart">重启</string>
+    <string name="action_stop">停止</string>
+    <string name="action_reopen_page">重新打开页面</string>
+    <string name="action_background_protection">后台保护</string>
+    <string name="action_battery_settings">电池设置</string>
+    <string name="action_diagnostics">诊断</string>
+    <string name="action_startup_log">启动日志</string>
+    <string name="action_about">说明</string>
+    <string name="action_failed">操作失败</string>
+
+    <string name="action_redownload">重新下载本体与内置插件</string>
+    <string name="redownload_title">重新下载最新 Staging 与三个内置插件？</string>
+    <string name="redownload_message">将停止当前服务，联网下载最新源码并重新安装依赖。聊天、角色、设置和用户级插件保留；普通启动不会检查更新。Staging 与第三方插件可能包含未验证的变更。</string>
+
+    <!-- Confirmation dialogs -->
+    <string name="confirm_restart_title">重启服务</string>
+    <string name="confirm_stop_title">停止服务</string>
+    <string name="confirm_message">确认%1$s？</string>
+    <string name="confirm_positive">确认</string>
+    <string name="confirm_cancel">取消</string>
+    <string name="dialog_close">关闭</string>
+
+    <!-- Background protection -->
+    <string name="protection_disable_title">关闭后台保护？</string>
+    <string name="protection_disable_message">关闭后台保护并保留当前服务。</string>
+    <string name="protection_disable_confirm">关闭</string>
+    <string name="protection_enable_title">开启本机会话后台保护？</string>
+    <string name="protection_enable_message">开启后显示常驻通知，在生成和保存时保持CPU运行，直到你关闭保护或停止服务。</string>
+    <string name="protection_enable_confirm">开启</string>
+    <string name="protection_enable_failed">无法开启</string>
+    <string name="protection_not_ready">请等待ST页面及活动观察器准备好；必要时更新Android System WebView</string>
+    <string name="protection_notifications_blocked">通知或保护通知渠道已被禁用，请先在系统设置开启</string>
+    <string name="protection_permission_denied">未获得通知权限，后台保护保持关闭；仍可前台使用</string>
+
+    <!-- Status line -->
+    <string name="status_protection_on">保护已开 / CPU唤醒%1$s</string>
+    <string name="status_wake_held">中</string>
+    <string name="status_wake_released">已释放</string>
+    <string name="status_protection_off">保护未开启</string>
+    <string name="status_observer_ready">观察器就绪</string>
+    <string name="status_observer_waiting">观察器未就绪</string>
+    <string name="status_line">%1$s · %2$s %3$s\n%4$s · %5$s</string>
+
+    <!-- Diagnostics / logs / about -->
+    <string name="diagnostics_clip_label">ST Android diagnostics</string>
+    <string name="diagnostics_copied">已复制诊断状态（不含密钥、Cookie、聊天或启动日志）</string>
+    <string name="startup_log_title">私有启动日志</string>
+    <string name="startup_log_empty">暂无启动日志</string>
+    <string name="about_title">关于 / 许可证</string>
+    <string name="about_body">SillyTavern Android 启动器\n内置 Node26 与本机 WebView。首次启动下载 ST Staging 和三个全局插件；后续离线复用。配置和用户数据存储于独立应用目录。\n后台保护显示常驻通知，在生成、保存及收尾时保持CPU运行。\n内置插件随本体重新下载更新，不在酒馆内更新全局插件；用户级插件独立保存。源码与构建说明见工程README；许可证保存在assets/licenses及下载的源码中。\n\n</string>
+
+    <!-- Miscellaneous -->
+    <string name="file_chooser_unavailable">无法打开文件选择器</string>
+    <string name="download_unsupported">此下载无法保存</string>
+
+    <!-- Foreground service notification -->
+    <string name="notification_title">ST 本机会话保护</string>
+    <string name="notification_page_lost">页面已中断，请返回应用</string>
+    <string name="notification_working">正在生成或保存，保持CPU运行；可停止生成</string>
+    <string name="notification_idle">本机会话保护已开启，空闲时不持有CPU唤醒锁</string>
+    <string name="notification_starting">本机会话保护已开启，等待生成</string>
+    <string name="notification_action_stop_generation">停止生成</string>
+    <string name="notification_action_disable">关闭保护</string>
+    <string name="notification_channel_name">ST本机会话保护</string>
+    <string name="notification_channel_description">用户主动开启的本地WebView与Node会话；停止生成/关闭保护始终可见</string>
+</resources>

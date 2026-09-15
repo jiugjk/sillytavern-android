@@ -10,24 +10,40 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 VERSION_FILE = ROOT / 'android-app/version.properties'
 SEMVER = re.compile(r'^(\d+)\.(\d+)\.(\d+)$')
+KEYS = ('versionCode', 'versionName')
 
 
-def read():
+def definition(key):
+    """One regex shared by reading and writing, so both agree on what a definition is."""
+    return re.compile(rf'(?m)^[ \t]*{re.escape(key)}[ \t]*=[^\n]*$')
+
+
+def parse(text):
+    """Parse with the same rule used for replacement; reject duplicate keys."""
     values = {}
-    for line in VERSION_FILE.read_text().splitlines():
+    for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith('#'):
             continue
         key, separator, value = stripped.partition('=')
         if not separator:
             raise ValueError(f'Malformed line in version.properties: {line}')
-        values[key.strip()] = value.strip()
-    for key in ('versionCode', 'versionName'):
+        key = key.strip()
+        if key in values:
+            raise ValueError(f'Duplicate {key} definition in version.properties')
+        values[key] = value.strip()
+    for key in KEYS:
         if key not in values:
             raise ValueError(f'Missing {key} in version.properties')
+        if len(definition(key).findall(text)) != 1:
+            raise ValueError(f'{key}: expected exactly one definition in version.properties')
     if not values['versionCode'].isdigit():
         raise ValueError(f"versionCode must be a positive integer, got {values['versionCode']}")
     return int(values['versionCode']), values['versionName']
+
+
+def read():
+    return parse(VERSION_FILE.read_text())
 
 
 def next_name(current, bump):
@@ -42,11 +58,30 @@ def next_name(current, bump):
     return f'{major}.{minor}.{patch + 1}'
 
 
+def replace_property(text, key, value):
+    """Normalize the definition to `key=value`; refuse anything but a single match."""
+    updated, count = definition(key).subn(lambda _: f'{key}={value}', text)
+    if count != 1:
+        raise ValueError(f'{key}: expected one definition to replace, got {count}')
+    return updated
+
+
 def write(code, name):
     text = VERSION_FILE.read_text()
-    text = re.sub(r'^versionCode=.*$', f'versionCode={code}', text, count=1, flags=re.MULTILINE)
-    text = re.sub(r'^versionName=.*$', f'versionName={name}', text, count=1, flags=re.MULTILINE)
-    VERSION_FILE.write_text(text)
+    for key, value in (('versionCode', code), ('versionName', name)):
+        text = replace_property(text, key, value)
+    # Both fields validated before the file is touched; publish atomically.
+    temporary = VERSION_FILE.with_name(f'.{VERSION_FILE.name}.{os.getpid()}.tmp')
+    try:
+        temporary.write_text(text)
+        temporary.replace(VERSION_FILE)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    # Read back so "reported" and "on disk" can never diverge.
+    written_code, written_name = read()
+    if (written_code, written_name) != (int(code), str(name)):
+        raise ValueError(f'Version write-back mismatch: wanted {code}/{name}, file now has {written_code}/{written_name}')
 
 
 def main():

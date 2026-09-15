@@ -1,10 +1,16 @@
 # SillyTavern Android 启动器
 
-## 当前任务：P1 全区域WebView（方案B）
+## 当前方案：首次联网安装 ST Staging 与内置全局插件
+
+APK 只带 Node26 与安装器。首次启动下载 ST Staging 和 ST-Prompt-Template、JS-Slash-Runner、st-theater 的最新源码并安装生产依赖；普通启动离线复用。重新下载入口保留用户数据。实现、信任边界、构建命令和真机待验项见 **[首次安装说明](docs/first-run-install.md)**。
+
+以下阶段记录中的固定 ST payload、历史包大小和时间不是当前 APK 的验收结论。
+
+## 历史阶段：P1 全区域WebView
 
 P0已获用户确认。当前交付：`build/releases/sillytavern-android-0.4.1-p1.apk`。ST占满系统安全区域；控制入口为贴边小竖条，向内滑动展开、上下调整位置，键盘弹出时隐藏。窗口背景改为深色，修正透明状态栏下露出的白色底色。改动文件、原因和验证命令见 [P1记录](docs/p1-fullscreen.md)；图标来源保留于 [P0记录](docs/p0-icons.md)。
 
-本轮只做P1，不实施P2；等待用户确认P1后再继续。
+以上是历史 P1 交付记录，不限制当前首次联网安装方案。
 
 以下保留既有构建与阶段记录。
 
@@ -25,11 +31,11 @@ P0已获用户确认。当前交付：`build/releases/sillytavern-android-0.4.1-
 
 ## 0. 构建当前实验APK
 
-实验App放在独立`android-app/`构建中，避免使已有v0.2探针指纹失效；复用同一份M1 JNI桥源码，不改ST。完成下节环境配置并已有payload后：
+实验App放在独立`android-app/`构建中，避免使已有v0.2探针指纹失效；复用同一份M1 JNI桥源码，不改ST。完成下节环境配置并已有匹配的 Node runtime 后（`prepareApp` 会准备安装器）：
 
 ```bash
 (cd android-app && ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug)
-python3 tools/app/verify.py android-app/app/build/outputs/apk/debug/app-debug.apk
+python3 tools/app/verify.py --variant debug --require-signature android-app/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 App包名`dev.stshell.app`，与探针并存；当前约244MiB，建议留1.5GiB以上空间。点击“诊断”可复制不含密钥/聊天的活动、前台服务、唤醒锁和HTTP请求状态，必要时再人工检查“启动日志”。不是正式可交付或已验证后台可靠性的版本。
@@ -38,7 +44,7 @@ App包名`dev.stshell.app`，与探针并存；当前约244MiB，建议留1.5GiB
 
 Actions里的 **Android APK** 工作流手动触发，可选只出`release`或`debug`，按`patch/minor/major`推进
 `android-app/version.properties`并把版本提交回当前分支，随后把APK发到Releases。Node交叉编译产物与
-ST payload分别缓存，命中缓存时整条流水线只需十几到几十分钟；首次或改动Node锁/补丁时要完整重编Node。
+首次安装器分别缓存；ST 与插件在设备首次启动时下载。缺少匹配 Node 缓存或改动锁/补丁时需要重编 Node。
 
 release签名来自仓库secrets（`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、
 `ANDROID_KEY_PASSWORD`）；用`bash tools/ci/make_signing_key.sh`在本机生成keystore再上传，

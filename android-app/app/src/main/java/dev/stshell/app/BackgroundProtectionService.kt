@@ -41,7 +41,7 @@ class BackgroundProtectionService : Service() {
                     publishFailure("notification_or_session_unavailable"); stopSelf(); return START_NOT_STICKY
                 }
                 try {
-                    startForeground(NOTIFICATION_ID, notification("本机会话保护已开启，等待生成"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                    startForeground(NOTIFICATION_ID, notification(getString(R.string.notification_starting)), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
                     active = true; running = true
                     main.post(tick)
                 } catch (error: Exception) {
@@ -73,9 +73,9 @@ class BackgroundProtectionService : Service() {
                 latest = snapshot.toString()
                 val front = snapshot.getJSONObject("frontend")
                 val text = when {
-                    !front.optBoolean("documentPresent") -> "页面已中断，请返回应用"
-                    needed -> "正在生成或保存，保持CPU运行；可停止生成"
-                    else -> "本机会话保护已开启，空闲时不持有CPU唤醒锁"
+                    !front.optBoolean("documentPresent") -> getString(R.string.notification_page_lost)
+                    needed -> getString(R.string.notification_working)
+                    else -> getString(R.string.notification_idle)
                 }
                 if (text != lastNotification) {
                     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
@@ -92,10 +92,10 @@ class BackgroundProtectionService : Service() {
         fun action(code: Int, name: String) = PendingIntent.getService(this, code, Intent(this, BackgroundProtectionService::class.java)
             .setAction(name), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return LauncherBranding.notificationBuilder(this, CHANNEL, largeIcon)
-            .setContentTitle("ST 本机会话保护").setContentText(text).setContentIntent(open)
+            .setContentTitle(getString(R.string.notification_title)).setContentText(text).setContentIntent(open)
             .setOnlyAlertOnce(true).setOngoing(true).setCategory(Notification.CATEGORY_SERVICE)
-            .addAction(Notification.Action.Builder(null, "停止生成", action(81, CANCEL_GENERATION)).build())
-            .addAction(Notification.Action.Builder(null, "关闭保护", action(82, DISABLE)).build()).build()
+            .addAction(Notification.Action.Builder(null, getString(R.string.notification_action_stop_generation), action(81, CANCEL_GENERATION)).build())
+            .addAction(Notification.Action.Builder(null, getString(R.string.notification_action_disable), action(82, DISABLE)).build()).build()
     }
     private fun publishFailure(reason: String) {
         latest = JSONObject().put("enabled", false).put("foreground", false).put("wakeHeld", false).put("error", reason).toString()
@@ -136,8 +136,8 @@ class BackgroundProtectionService : Service() {
         fun diagnostic() = JSONObject(latest)
         fun ensureChannel(context: Context) {
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL, "ST本机会话保护", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "用户主动开启的本地WebView与Node会话；停止生成/关闭保护始终可见"
+                NotificationChannel(CHANNEL, context.getString(R.string.notification_channel_name), NotificationManager.IMPORTANCE_LOW).apply {
+                    description = context.getString(R.string.notification_channel_description)
                 })
         }
         fun notificationsAllowed(context: Context): Boolean {

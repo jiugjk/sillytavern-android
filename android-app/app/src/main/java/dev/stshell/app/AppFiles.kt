@@ -2,6 +2,7 @@
 package dev.stshell.app
 
 import android.content.Context
+import android.system.Os
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -11,6 +12,18 @@ import java.nio.file.Files
 import java.util.UUID
 
 object AppFiles {
+    // Installed payloads are immutable: the launcher drops write permission on
+    // the whole tree so upstream code that resolves a writable path relative to
+    // the server directory (notably global extension installs, which use
+    // public/scripts/extensions/third-party) fails loudly at install time
+    // instead of silently corrupting the payload and blocking the NEXT startup
+    // with an integrity failure. User-level extensions live under the state
+    // directory and are unaffected.
+    private const val PAYLOAD_FILE_MODE = 0x100   // 0400, owner only
+    private const val PAYLOAD_DIR_MODE = 0x140    // 0500, owner only
+    private const val STAGE_FILE_MODE = 0x180     // 0600
+    private const val STAGE_DIR_MODE = 0x1C0      // 0700
+
     fun state(context: Context) = File(context.noBackupFilesDir, "st-state").apply {
         require(!Files.isSymbolicLink(toPath())); check(mkdirs() || isDirectory)
     }
@@ -39,6 +52,27 @@ object AppFiles {
         writeJson(selection, JSONObject().put("port", value))
         return value
     }
+
+    /** Applies [fileMode]/[dirMode] bottom-up so directories stay traversable while we walk them. */
+    private fun applyMode(root: File, fileMode: Int, dirMode: Int) {
+        require(!Files.isSymbolicLink(root.toPath()))
+        if (root.isDirectory) {
+            for (child in root.listFiles() ?: error("Cannot enumerate payload directory")) applyMode(child, fileMode, dirMode)
+            Os.chmod(root.absolutePath, dirMode)
+        } else {
+            Os.chmod(root.absolutePath, fileMode)
+        }
+    }
+
+    /** Makes the installed payload read-only; call before handing it to Node. */
+    fun sealPayload(payload: File) {
+        // A read-only root does not prove that all descendants are read-only.
+        applyMode(payload, PAYLOAD_FILE_MODE, PAYLOAD_DIR_MODE)
+    }
+
+    /** Restores owner write access so a staging tree can be cleaned up or replaced. */
+    private fun unsealForCleanup(tree: File) = applyMode(tree, STAGE_FILE_MODE, STAGE_DIR_MODE)
+
     fun preparePayload(context: Context, contract: JSONObject, progress: (String, Int, Int) -> Unit): File {
         val pointer = contract.getJSONObject("payload")
         val bytes = context.assets.open("payload/manifest.json").use { it.readBytes() }
@@ -49,6 +83,9 @@ object AppFiles {
         if (installed.exists()) {
             progress("verifying", 0, archive.files.size)
             archive.verifyInstalled(installed) { n, all -> progress("verifying", n, all) }
+            // Re-seal: an older build may have installed a writable tree.
+            sealPayload(installed)
+            reclaim(parent, installed)
             return installed
         }
         require(parent.usableSpace > archive.totalBytes + pointer.getLong("archiveBytes") + 64 * 1024 * 1024) { "Insufficient space to unpack payload" }
@@ -68,12 +105,40 @@ object AppFiles {
                 }
             }
             archive.extract(zip, stage) { n, all -> progress("unpacking", n, all) }
+            // Seal before publishing so the tree is never writable under its final name.
+            sealPayload(stage)
             check(!installed.exists() && stage.renameTo(installed)) { "Cannot publish payload" }
+            reclaim(parent, installed)
             return installed
         } finally {
             zip.delete()
             // Only a freshly created, regular-only staging tree; never user state.
-            if (stage.exists()) stage.deleteRecursively()
+            if (stage.exists()) {
+                try { unsealForCleanup(stage) } catch (_: Exception) { }
+                stage.deleteRecursively()
+            }
+        }
+    }
+
+    /**
+     * Reclaims superseded payloads and abandoned staging trees. Only entries
+     * directly under the launcher-owned `runtime` directory are considered, and
+     * only names this code creates: a 64-hex payload id, or a `.install-<uuid>`
+     * staging directory. User state lives elsewhere and is never touched.
+     */
+    private val PAYLOAD_ID = Regex("[a-f0-9]{64}")
+    private val STAGING = Regex("\\.install-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+    fun reclaim(parent: File, keep: File) {
+        val entries = parent.listFiles() ?: return
+        for (entry in entries) {
+            if (entry.absolutePath == keep.absolutePath) continue
+            if (Files.isSymbolicLink(entry.toPath()) || !entry.isDirectory) continue
+            val name = entry.name
+            if (!PAYLOAD_ID.matches(name) && !STAGING.matches(name)) continue
+            try {
+                unsealForCleanup(entry)
+                entry.deleteRecursively()
+            } catch (_: Exception) { /* Reclaiming disk space must never block startup. */ }
         }
     }
 }

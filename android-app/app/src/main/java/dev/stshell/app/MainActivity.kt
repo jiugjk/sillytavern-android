@@ -80,23 +80,34 @@ class MainActivity : Activity() {
         panelStatus = TextView(this).apply { id = R.id.launcher_panel_status }
         panelProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { id = R.id.launcher_panel_progress }
         column.addView(panelStatus); column.addView(panelProgress)
-        fun action(label: String, callback: () -> Unit) {
+        fun action(labelRes: Int, callback: () -> Unit) {
             column.addView(Button(this).apply {
-                text = label
+                setText(labelRes)
                 setOnClickListener {
                     closeControls()
-                    try { callback() } catch (error: Exception) { notice(error.message ?: "操作失败") }
+                    try { callback() } catch (error: Exception) { notice(error.message ?: getString(R.string.action_failed)) }
                 }
             }, LinearLayout.LayoutParams(-1, -2))
         }
-        action("启动") { SessionController.start() }
-        action("重启") { confirmServiceAction("重启服务") { SessionController.stop(restart = true) } }
-        action("停止") { confirmServiceAction("停止服务") { SessionController.stop() } }
-        action("后台保护") { toggleProtection() }
-        action("电池设置") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-        action("诊断") { copyDiagnostic() }
-        action("启动日志") { showStartupLog() }
-        action("说明") { showAbout() }
+        action(R.string.action_start) { SessionController.start() }
+        // Page-only recovery: rebuild the WebView while Node keeps running.
+        // Offered only when the service is healthy and just the page is broken.
+        if (latestState.optBoolean("canReopenBrowser")) {
+            action(R.string.action_reopen_page) { SessionController.reopenBrowser() }
+        }
+        action(R.string.action_restart) { confirmServiceAction(getString(R.string.confirm_restart_title)) { SessionController.stop(restart = true) } }
+        action(R.string.action_stop) { confirmServiceAction(getString(R.string.confirm_stop_title)) { SessionController.stop() } }
+        action(R.string.action_redownload) {
+            AlertDialog.Builder(this).setTitle(R.string.redownload_title)
+                .setMessage(R.string.redownload_message)
+                .setPositiveButton(R.string.confirm_positive) { _, _ -> SessionController.redownloadSources() }
+                .setNegativeButton(R.string.confirm_cancel, null).show()
+        }
+        action(R.string.action_background_protection) { toggleProtection() }
+        action(R.string.action_battery_settings) { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        action(R.string.action_diagnostics) { copyDiagnostic() }
+        action(R.string.action_startup_log) { showStartupLog() }
+        action(R.string.action_about) { showAbout() }
         val background = android.util.TypedValue().also { theme.resolveAttribute(android.R.attr.colorBackground, it, true) }.data
         val sheet = ScrollView(this).apply {
             id = R.id.launcher_controls_sheet
@@ -130,51 +141,59 @@ class MainActivity : Activity() {
         val phase = value.optString("phase", "idle")
         val all = value.optInt("total"); val done = value.optInt("done")
         val guard = value.optJSONObject("background")
-        val protection = if (guard?.optBoolean("enabled") == true) "保护已开 / CPU唤醒${if (guard.optBoolean("wakeHeld")) "中" else "已释放"}" else "保护未开启"
-        val observer = if (value.optJSONObject("observer")?.optBoolean("observerReady") == true) "观察器就绪" else "观察器未就绪"
-        panelStatus?.text = "$phase · ${value.optString("detail")} ${if (all > 0) "$done/$all" else ""}\n$protection · $observer"
+        val protection = if (guard?.optBoolean("enabled") == true) {
+            getString(R.string.status_protection_on,
+                getString(if (guard.optBoolean("wakeHeld")) R.string.status_wake_held else R.string.status_wake_released))
+        } else getString(R.string.status_protection_off)
+        val observer = getString(if (value.optJSONObject("observer")?.optBoolean("observerReady") == true)
+            R.string.status_observer_ready else R.string.status_observer_waiting)
+        panelStatus?.text = getString(R.string.status_line, phase, value.optString("detail"),
+            if (all > 0) "$done/$all" else "", protection, observer)
         panelProgress?.apply {
-            visibility = if (phase in setOf("connecting", "preparing", "copying", "unpacking", "verifying", "starting", "checking")) View.VISIBLE else View.GONE
+            // ServerPhase owns "is startup in progress", not a string list here.
+            visibility = if (ServerPhase.from(value.optString("serverPhase", phase)).busy) View.VISIBLE else View.GONE
             isIndeterminate = all <= 0
             if (all > 0) { max = all; progress = done }
         }
     }
     private fun toggleProtection() {
         if (BackgroundProtectionService.running) {
-            AlertDialog.Builder(this).setTitle("关闭后台保护？")
-                .setMessage("关闭后台保护并保留当前服务。")
-                .setPositiveButton("关闭") { _, _ -> SessionController.disableProtection() }.setNegativeButton("取消", null).show()
+            AlertDialog.Builder(this).setTitle(R.string.protection_disable_title)
+                .setMessage(R.string.protection_disable_message)
+                .setPositiveButton(R.string.protection_disable_confirm) { _, _ -> SessionController.disableProtection() }
+                .setNegativeButton(R.string.confirm_cancel, null).show()
             return
         }
-        if (!SessionController.canProtect()) { notice("请等待ST页面及活动观察器准备好；必要时更新Android System WebView"); return }
+        if (!SessionController.canProtect()) { notice(getString(R.string.protection_not_ready)); return }
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             pendingProtection = true
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION)
             return
         }
         if (!BackgroundProtectionService.notificationsAllowed(this)) {
-            notice("通知或保护通知渠道已被禁用，请先在系统设置开启")
+            notice(getString(R.string.protection_notifications_blocked))
             startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
             return
         }
-        AlertDialog.Builder(this).setTitle("开启本机会话后台保护？")
-            .setMessage("开启后显示常驻通知，在生成和保存时保持CPU运行，直到你关闭保护或停止服务。")
-            .setPositiveButton("开启") { _, _ ->
-                try { SessionController.enableProtection() } catch (error: Exception) { notice(error.message ?: "无法开启") }
-            }.setNegativeButton("取消", null).show()
+        AlertDialog.Builder(this).setTitle(R.string.protection_enable_title)
+            .setMessage(R.string.protection_enable_message)
+            .setPositiveButton(R.string.protection_enable_confirm) { _, _ ->
+                try { SessionController.enableProtection() } catch (error: Exception) { notice(error.message ?: getString(R.string.protection_enable_failed)) }
+            }.setNegativeButton(R.string.confirm_cancel, null).show()
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == NOTIFICATION_PERMISSION && pendingProtection) {
             pendingProtection = false
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) toggleProtection()
-            else notice("未获得通知权限，后台保护保持关闭；仍可前台使用")
+            else notice(getString(R.string.protection_permission_denied))
         }
     }
     private fun confirmServiceAction(name: String, action: () -> Unit) {
         AlertDialog.Builder(this).setTitle(name)
-            .setMessage("确认$name？")
-            .setPositiveButton("确认") { _, _ -> action() }.setNegativeButton("取消", null).show()
+            .setMessage(getString(R.string.confirm_message, name))
+            .setPositiveButton(R.string.confirm_positive) { _, _ -> action() }
+            .setNegativeButton(R.string.confirm_cancel, null).show()
     }
     fun chooseFiles(multiple: Boolean) {
         try {
@@ -182,7 +201,7 @@ class MainActivity : Activity() {
                 addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
             }, OPEN_FILE)
-        } catch (error: Exception) { SessionController.fileCallback?.onReceiveValue(null); SessionController.fileCallback = null; notice("无法打开文件选择器") }
+        } catch (error: Exception) { SessionController.fileCallback?.onReceiveValue(null); SessionController.fileCallback = null; notice(getString(R.string.file_chooser_unavailable)) }
     }
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -197,32 +216,29 @@ class MainActivity : Activity() {
     }
     private fun copyDiagnostic() {
         val value = SessionController.diagnostic().toString(2)
-        val clip = ClipData.newPlainText("ST Android diagnostics", value)
+        val clip = ClipData.newPlainText(getString(R.string.diagnostics_clip_label), value)
         clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
         getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
-        notice("已复制诊断状态（不含密钥、Cookie、聊天或启动日志）")
+        notice(getString(R.string.diagnostics_copied))
     }
     private fun showStartupLog() {
         val file = java.io.File(AppFiles.state(this), "startup.log")
-        val log = if (file.isFile && file.length() <= 65536) file.readText() else "暂无启动日志"
+        val log = if (file.isFile && file.length() <= 65536) file.readText() else getString(R.string.startup_log_empty)
         val view = TextView(this).apply {
             setPadding(20, 20, 20, 20); setTextIsSelectable(true)
             text = log
         }
-        AlertDialog.Builder(this).setTitle("私有启动日志")
-            .setView(ScrollView(this).apply { addView(view) }).setPositiveButton("关闭", null).show()
+        AlertDialog.Builder(this).setTitle(R.string.startup_log_title)
+            .setView(ScrollView(this).apply { addView(view) }).setPositiveButton(R.string.dialog_close, null).show()
     }
     private fun showAbout() {
         val text = TextView(this).apply {
             setTextIsSelectable(true); setPadding(20, 20, 20, 20)
-            text = "SillyTavern Android 启动器\n" +
-                "Node26 服务端与本机 WebView，配置和用户数据存储于应用目录。\n" +
-                "后台保护显示常驻通知，在生成、保存及收尾时保持CPU运行。\n" +
-                "源码与构建说明见工程README；许可证保存在assets/licenses及ST源码中。\n\n" +
+            text = getString(R.string.about_body) +
                 assets.open("licenses/AGPL-3.0.txt").bufferedReader().use { it.readText() }
         }
-        AlertDialog.Builder(this).setTitle("关于 / 许可证")
-            .setView(ScrollView(this).apply { addView(text) }).setPositiveButton("关闭", null).show()
+        AlertDialog.Builder(this).setTitle(R.string.about_title)
+            .setView(ScrollView(this).apply { addView(text) }).setPositiveButton(R.string.dialog_close, null).show()
     }
     fun notice(text: String) { Toast.makeText(this, text, Toast.LENGTH_LONG).show() }
     override fun onStart() { super.onStart(); SessionController.activityVisibility(true) }
