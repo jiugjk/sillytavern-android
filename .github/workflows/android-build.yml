@@ -1,7 +1,7 @@
 name: Android APK
 
 # Manual only: a cold run cross-compiles Node 26 for arm64 and can take hours.
-# Every expensive stage is cached, so later runs reuse libnode.so and the ST payload.
+# The APK contains libnode and installer tooling; ST/plugins download on first run.
 on:
   workflow_dispatch:
     inputs:
@@ -61,8 +61,8 @@ jobs:
           set -euo pipefail
           # libnode.so only changes with the Node pin, the patches or the recipe.
           echo "runtime=node-runtime-v1-${{ hashFiles('upstream.lock.json', 'patches/node-runtime/*.patch', 'tools/build_node.py', 'tools/runtime_common.py') }}" >> "$GITHUB_OUTPUT"
-          # The payload only changes with the ST pin, the policies or the shell adaptation.
-          echo "payload=st-payload-v1-${{ hashFiles('upstream.lock.json', 'config/payload-policy.json', 'config/mobile-policy.json', 'tools/payload/*.py', 'runtime/mobile/*.mjs') }}" >> "$GITHUB_OUTPUT"
+          # Only APK-owned installer tooling is cached; remote ST refs resolve on-device.
+          echo "payload=st-installer-v1-${{ hashFiles('config/first-install.json', 'config/mobile-policy.json', 'tools/app/*.py', 'tools/payload/*.py', 'runtime/mobile/*.mjs') }}" >> "$GITHUB_OUTPUT"
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           print('node=' + json.load(open('upstream.lock.json'))['node']['version'])
@@ -130,7 +130,7 @@ jobs:
           if-no-files-found: ignore
 
   payload:
-    name: SillyTavern payload
+    name: First-run installer tooling
     needs: plan
     runs-on: ${{ (github.actor == 'jiugjk' && github.repository_owner == 'jiugjk') && fromJSON('["self-hosted", "fast-tmpfs"]') || 'ubuntu-latest' }}
     timeout-minutes: 90
@@ -143,7 +143,7 @@ jobs:
         id: cache
         uses: actions/cache/restore@v6.1.0
         with:
-          path: build/payload
+          path: build/installer
           key: ${{ needs.plan.outputs.payload-key }}
           lookup-only: true
 
@@ -166,14 +166,13 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          python3 tools/payload/prepare.py
-          python3 tools/payload/verify.py
+          python3 tools/app/prepare_installer.py
 
       - name: Save payload cache
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0
         with:
-          path: build/payload
+          path: build/installer
           key: ${{ needs.plan.outputs.payload-key }}
 
   apk:
@@ -203,10 +202,10 @@ jobs:
           key: ${{ needs.plan.outputs.runtime-key }}
           fail-on-cache-miss: true
 
-      - name: Restore SillyTavern payload
+      - name: Restore first-run installer
         uses: actions/cache/restore@v6.1.0
         with:
-          path: build/payload
+          path: build/installer
           key: ${{ needs.plan.outputs.payload-key }}
           fail-on-cache-miss: true
 
@@ -229,6 +228,59 @@ jobs:
           else
             python3 tools/ci/bump_version.py --bump "$VERSION_BUMP"
           fi
+
+      # The version bump is committed and pushed BEFORE anything is compiled, and
+      # the resulting commit is frozen as the build SHA. Rebasing after the APKs
+      # exist would let the published "source commit" contain changes that never
+      # entered those APKs; here a rebase happens before the build, so the tree
+      # that gets compiled is exactly the tree the Release points at.
+      - name: Commit the version bump and freeze the build SHA
+        id: commit
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.version.outputs.changed }}" != "true" ] || [ "${{ github.ref_type }}" != "branch" ]; then
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            echo "No version commit needed; building $(git rev-parse HEAD)."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android-app/version.properties
+          git commit -m "chore(release): ${{ steps.version.outputs.versionName }} (versionCode ${{ steps.version.outputs.versionCode }})"
+          pushed=false
+          for delay in 2 4 8 16 0; do
+            if git push origin "HEAD:$BRANCH"; then pushed=true; break; fi
+            if [ "$delay" -eq 0 ]; then break; fi
+            sleep "$delay"
+            # Rebasing here is safe: nothing has been compiled yet, and the build
+            # below runs against this rebased tree.
+            git pull --rebase origin "$BRANCH"
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "::error::Could not push the version commit; refusing to build an APK whose source commit is unpublished." >&2
+            exit 1
+          fi
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Frozen build SHA: $sha"
+
+      - name: Verify the working tree still matches the frozen build SHA
+        run: |
+          set -euo pipefail
+          expected="${{ steps.commit.outputs.sha }}"
+          actual="$(git rev-parse HEAD)"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Working tree moved from $expected to $actual before the build." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Uncommitted changes present; the APK would not match the recorded commit." >&2
+            git status --porcelain >&2
+            exit 1
+          fi
+          echo "Building $actual with a clean tree."
 
       - name: Decode release keystore
         id: signing
@@ -267,6 +319,14 @@ jobs:
           echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
+      - name: Refuse to publish an unsigned release APK
+        if: inputs.publish_release && inputs.build_type != 'debug' && steps.signing.outputs.signed != 'true'
+        run: |
+          echo "A release APK without a signature cannot be installed." >&2
+          echo "Set ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS /" >&2
+          echo "ANDROID_KEY_PASSWORD (see docs/ci-release.md), or re-run with publish_release=false." >&2
+          exit 1
+
       - name: Run unit tests and lint
         if: inputs.run_checks
         working-directory: android-app
@@ -288,16 +348,23 @@ jobs:
 
       - name: Verify debug APK
         if: inputs.build_type != 'release'
-        run: python3 tools/app/verify.py android-app/app/build/outputs/apk/debug/app-debug.apk
+        run: python3 tools/app/verify.py --variant debug android-app/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Verify release signature and alignment
-        if: inputs.build_type != 'debug' && steps.signing.outputs.signed == 'true'
+      # Same content, permission, asset-inventory and native checks as debug.
+      # Signature+alignment alone never proved the packaged contents were right.
+      - name: Verify release APK
+        if: inputs.build_type != 'debug'
         run: |
           set -euo pipefail
           apk=android-app/app/build/outputs/apk/release/app-release.apk
-          apksigner verify --verbose --print-certs "$apk"
-          zipalign -c -P 16 -v 4 "$apk" > /dev/null
-          echo "Release APK is signed and 16 KB aligned."
+          if [ ! -f "$apk" ]; then
+            apk=android-app/app/build/outputs/apk/release/app-release-unsigned.apk
+          fi
+          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+            python3 tools/app/verify.py --variant release --require-signature "$apk"
+          else
+            python3 tools/app/verify.py --variant release "$apk"
+          fi
 
       - name: Collect APKs
         id: collect
@@ -322,7 +389,7 @@ jobs:
           cat dist/SHA256SUMS.txt
           contract=build/app-inputs/assets/app-contract.json
           echo "appIdentity=$(python3 -c "import json;print(json.load(open('$contract'))['appIdentity'])")" >> "$GITHUB_OUTPUT"
-          echo "payloadId=$(python3 -c "import json;print(json.load(open('build/payload/current.json'))['payloadId'])")" >> "$GITHUB_OUTPUT"
+          echo "payloadId=$(python3 -c "import json;print(json.load(open('build/installer/current.json'))['payloadId'])")" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7.0.1
@@ -332,33 +399,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Refuse to publish an unsigned release APK
-        if: inputs.publish_release && inputs.build_type != 'debug' && steps.signing.outputs.signed != 'true'
-        run: |
-          echo "A release APK without a signature cannot be installed." >&2
-          echo "Set ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS /" >&2
-          echo "ANDROID_KEY_PASSWORD (see docs/ci-release.md), or re-run with publish_release=false." >&2
-          exit 1
-
-      - name: Commit the version bump
-        id: commit
-        if: steps.version.outputs.changed == 'true' && github.ref_type == 'branch'
-        env:
-          BRANCH: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add android-app/version.properties
-          git commit -m "chore(release): ${{ steps.version.outputs.versionName }} (versionCode ${{ steps.version.outputs.versionCode }})"
-          for delay in 2 4 8 16 0; do
-            if git push origin "HEAD:$BRANCH"; then break; fi
-            if [ "$delay" -eq 0 ]; then exit 1; fi
-            sleep "$delay"
-            git pull --rebase origin "$BRANCH"
-          done
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Publish GitHub Release
         if: inputs.publish_release
         env:
@@ -367,7 +407,17 @@ jobs:
           set -euo pipefail
           version="${{ steps.version.outputs.versionName }}"
           code="${{ steps.version.outputs.versionCode }}"
-          target="${{ steps.commit.outputs.sha || github.sha }}"
+          # The SHA frozen before compilation; the APKs were built from exactly
+          # this tree, so the Release cannot point at unbuilt changes.
+          target="${{ steps.commit.outputs.sha }}"
+          if [ -z "$target" ]; then
+            echo "::error::No frozen build SHA available; refusing to publish." >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$target" ]; then
+            echo "::error::HEAD moved away from the frozen build SHA $target; refusing to publish." >&2
+            exit 1
+          fi
           tag="v${version}"
           if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
             tag="v${version}-build${code}"
@@ -384,7 +434,7 @@ jobs:
             echo "| versionCode | \`${code}\` |"
             echo "| 源码 commit | \`${target}\` |"
             echo "| appIdentity | \`${{ steps.collect.outputs.appIdentity }}\` |"
-            echo "| payloadId | \`${{ steps.collect.outputs.payloadId }}\` |"
+            echo "| installerId | \`${{ steps.collect.outputs.payloadId }}\` |"
             echo
             echo '### SHA256'
             echo '```'

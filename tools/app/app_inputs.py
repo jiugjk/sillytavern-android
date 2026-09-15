@@ -11,7 +11,7 @@ from runtime_common import identity, read_lock, sha256
 
 def contract():
     lock = read_lock()
-    pointer = json.loads((ROOT / 'build/payload/current.json').read_text())
+    pointer = json.loads((ROOT / 'build/installer/current.json').read_text())
     paths = set((ROOT / 'android-app/app/src').rglob('*'))
     paths.update((ROOT / 'tools/app').glob('*.py'))
     paths.update((ROOT / 'runtime/android').glob('*.mjs'))

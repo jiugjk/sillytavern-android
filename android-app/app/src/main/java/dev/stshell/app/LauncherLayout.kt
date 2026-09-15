@@ -143,8 +143,8 @@ class LauncherLayout(
     private fun updateEmptyState() {
         emptyState.visibility = if (hasBrowser()) GONE else VISIBLE
         if (hasBrowser()) return
-        val busy = phase in setOf("connecting", "preparing", "copying", "unpacking", "verifying", "starting", "checking")
-        emptyText.text = if (busy || phase in setOf("failed", "browser-error")) {
+        val busy = ServerPhase.from(phase).busy
+        emptyText.text = if (busy || phase == ServerPhase.FAILED.id || phase == BrowserPhase.ERROR.id) {
             listOf(phase, detail, if (progressTotal > 0) "$progressDone/$progressTotal" else "").filter { it.isNotEmpty() }.joinToString(" · ")
         } else context.getString(R.string.launcher_open_controls)
         startupProgress.visibility = if (busy) VISIBLE else GONE

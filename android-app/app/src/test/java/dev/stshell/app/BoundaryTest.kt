@@ -21,7 +21,10 @@ class BoundaryTest {
             val target = File(directory, "tree")
             spec.extract(File(assets, "payload/payload.zip"), target)
             spec.verifyInstalled(target)
-            assertTrue(File(target, "server/node_modules/tiktoken/tiktoken_bg.wasm").isFile)
+            assertEquals("online-installer", spec.manifest.getString("kind"))
+            assertTrue(File(target, "shell/first-install.mjs").isFile)
+            assertTrue(File(target, "shell/npm/node_modules/@npmcli/arborist/lib/index.js").isFile)
+            assertFalse("ST and extensions must be fetched on-device, not bundled", File(target, "server").exists())
         } finally { directory.deleteRecursively() }
     }
     @Test fun exactOriginAndAuthHost() {

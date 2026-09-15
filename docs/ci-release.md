@@ -57,8 +57,7 @@ gh secret set ANDROID_KEY_PASSWORD
 | 缓存 | key 依据 | 说明 |
 | --- | --- | --- |
 | `build/runtime` | `upstream.lock.json`、`patches/node-runtime/*`、`tools/build_node.py`、`tools/runtime_common.py` | 交叉编译出的 `libnode.so` 等产物 |
-| `build/payload` | `upstream.lock.json`、`config/*-policy.json`、`tools/payload/*.py`、`runtime/mobile/*.mjs` | ST payload.zip 与 manifest |
-| `~/.npm` | `upstream.lock.json` | payload 的 npm 下载 |
+| `build/installer` | `config/first-install.json`、mobile policy、`tools/app/*.py`、payload ZIP工具、`runtime/mobile/*.mjs` | 仅安装工具，不含 ST/插件；设备首次启动下载源码 |
 | Gradle | `gradle/actions/setup-gradle` 托管 | 依赖与 build cache（`--build-cache`） |
 
 首次运行（或改动 Node 锁/补丁）要完整交叉编译 Node 26，通常 2–4 小时，
@@ -69,7 +68,8 @@ Node 源码树（`build/node-source`，数十 GB）不入缓存，只缓存 stri
 
 ## 5. 校验范围
 
-- `debug` APK 走既有 `python3 tools/app/verify.py`（它按设计要求 `debuggable`，故不适用于 release）。
-- `release` APK 只做 `apksigner verify` 与 `zipalign -c -P 16 -v 4`；打包内容的完整性由构建期
-  `tools/app/prepare.py`（含 `verify_project.py`、runtime 与 payload 校验）保证。
+- Debug/Release 都执行 `tools/app/verify.py --variant debug|release`，执行相同的权限、资源、归档、原生库与身份校验；仅 debuggable 预期不同。发布时必须使用 `--require-signature`。
+- Release 的压缩资源路径从 aapt2 资源表解析，不依赖 Debug 路径。APK 固定安装器身份，不固定远端 ST 版本；实际下载提交见设备诊断中的 installation。
+- 构建前提交版本并冻结 SHA；发布前验证 HEAD 仍等于该 SHA，禁止构建后 rebase。
+- 首次安装行为与网络/许可证边界见 [首次安装说明](first-run-install.md)。
 - 工作流**不**做设备验收：没有 instrumentation、没有真机运行结论。发布产物仍是非官方实验包。

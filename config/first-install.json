@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "server": {"repository": "https://github.com/SillyTavern/SillyTavern", "ref": "staging"},
+  "extensions": [
+    {"name": "ST-Prompt-Template", "repository": "https://github.com/zonde306/ST-Prompt-Template", "ref": "HEAD", "licenseFile": "LICENSE"},
+    {"name": "JS-Slash-Runner", "repository": "https://github.com/n0vi028/JS-Slash-Runner", "ref": "HEAD", "licenseFile": "LICENSE"},
+    {"name": "st-theater", "repository": "https://github.com/koichole213-ui/st-theater", "ref": "HEAD", "licenseFile": "LICENSE.txt"}
+  ],
+  "npm": {
+    "version": "11.19.1",
+    "url": "https://registry.npmjs.org/npm/-/npm-11.19.1.tgz",
+    "integrity": "sha512-ztsxKxt/kkIaAs+2i0GU6I+DRmUdrNasxTZKJe9TCdSjKxlhah/4r/hl5ygMD6XAg1qZ9c2TNomR4qgOydp10g=="
+  }
+}

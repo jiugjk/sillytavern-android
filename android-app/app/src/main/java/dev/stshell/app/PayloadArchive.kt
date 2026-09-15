@@ -46,7 +46,10 @@ class PayloadArchive(manifestBytes: ByteArray, manifestSha: String, val archiveS
                 parent = parent.substringBeforeLast('/', "")
             }
         }
-        require(setOf("server/server.js", "server/package.json", "shell/bootstrap.mjs", "shell/policy.mjs", "shell/mobile-policy.json").all { it in files })
+        val required = if (manifest.optString("kind") == "online-installer")
+            setOf("shell/first-install.mjs", "shell/first-install.json", "shell/npm/package.json", "shell/bootstrap.mjs", "shell/policy.mjs", "shell/mobile-policy.json")
+        else setOf("server/server.js", "server/package.json", "shell/bootstrap.mjs", "shell/policy.mjs", "shell/mobile-policy.json")
+        require(required.all { it in files })
     }
 
     fun extract(archive: File, destination: File, progress: (Int, Int) -> Unit = { _, _ -> }) {
