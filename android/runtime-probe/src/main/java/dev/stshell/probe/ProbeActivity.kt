@@ -31,7 +31,8 @@ class ProbeActivity : Activity() {
     private lateinit var copyButton: Button
     private lateinit var exportButton: Button
     private var currentJson: String? = null
-    private var pendingExport: String? = null
+    private var pendingExportText: String? = null
+    private var pendingExportId: String? = null
     private var expectedProbeIdentity: String? = null
     private var currentPageSize = 0L
     private val poll = object : Runnable {
@@ -43,7 +44,7 @@ class ProbeActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        pendingExport = savedInstanceState?.getString("pendingExport")
+        pendingExportId = savedInstanceState?.getString("pendingExportId")
         expectedProbeIdentity = assets.open("probe-manifest.json").bufferedReader().use {
             JSONObject(it.readText()).getString("probeIdentity")
         }
@@ -184,7 +185,8 @@ class ProbeActivity : Activity() {
         val report = JSONObject(text)
         val pages = report.optJSONObject("device")?.optLong("pageSize", 0) ?: 0
         val id = report.optString("executionId", "report").take(8)
-        pendingExport = text
+        pendingExportText = text
+        pendingExportId = report.optString("executionId", "")
         startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "application/json"
@@ -195,16 +197,29 @@ class ProbeActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != EXPORT_REPORT) return
-        val text = pendingExport
-        pendingExport = null
-        if (resultCode != RESULT_OK || text == null) return
-        safely {
-            val uri = data?.data ?: error("No destination URI")
-            check(uri.scheme == "content") { "A Storage Access Framework document is required" }
-            val stream = contentResolver.openOutputStream(uri, "wt") ?: error("Cannot open document")
-            stream.use { it.write(text.toByteArray(Charsets.UTF_8)) }
-            toast(R.string.saved)
+        val text = pendingExportText ?: pendingExportId?.let { id ->
+            try {
+                ProbeCoordinator.currentReport(this)?.takeIf { it.optString("executionId") == id }?.toString()
+            } catch (_: Exception) { null }
         }
+        pendingExportText = null
+        pendingExportId = null
+        if (resultCode != RESULT_OK || text == null) return
+        val uri = data?.data ?: run { safely { error("No destination URI") }; return }
+        if (uri.scheme != "content") {
+            safely { error("A Storage Access Framework document is required") }
+            return
+        }
+        val resolver = contentResolver
+        Thread({
+            try {
+                val stream = resolver.openOutputStream(uri, "wt") ?: error("Cannot open document")
+                stream.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                handler.post { if (!isFinishing && !isDestroyed) toast(R.string.saved) }
+            } catch (error: Exception) {
+                handler.post { if (!isFinishing && !isDestroyed) safely { throw error } }
+            }
+        }, "SAF-Export").start()
     }
 
     private fun safely(action: () -> Unit) {
@@ -215,7 +230,7 @@ class ProbeActivity : Activity() {
     }
     private fun toast(message: Int) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString("pendingExport", pendingExport)
+        outState.putString("pendingExportId", pendingExportId)
         super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {

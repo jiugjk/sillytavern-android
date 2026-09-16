@@ -92,8 +92,14 @@ async function main() {
     const manifestBytes = fs.readFileSync(manifestPath);
     assert.equal(digest(manifestBytes), launch.manifestSha256, 'Manifest does not match the trusted launch descriptor');
     const manifest = JSON.parse(manifestBytes);
-    // Read-only permissions do not attest a prior hash pass. Always verify content.
-    await verifyTree(payloadRoot, manifest);
+    // Reuse in-process attestation if this exact process just completed a full
+    // verification pass during first-install/startup; otherwise verify the tree.
+    const verified = globalThis.__ST_VERIFIED_TREE__;
+    if (verified && verified.payloadRoot === payloadRoot && verified.manifestSha256 === launch.manifestSha256 && verified.payloadId === manifest.payloadId) {
+        delete globalThis.__ST_VERIFIED_TREE__;
+    } else {
+        await verifyTree(payloadRoot, manifest);
+    }
     const proposedState = futureRealPath(launch.stateRoot);
     assert(!under(payloadRoot, proposedState) && !under(proposedState, payloadRoot), 'State and payload must be separate directories');
     process.umask(0o077);

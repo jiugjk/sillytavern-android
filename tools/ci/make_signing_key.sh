@@ -5,11 +5,17 @@
 # passwords are private key material and must never be committed or pasted into
 # an issue, a PR or a chat window.
 set -euo pipefail
+umask 077
 
 KEYSTORE="${KEYSTORE:-sillytavern-android-release.jks}"
 ALIAS="${ALIAS:-sillytavern-android}"
 DNAME="${DNAME:-CN=SillyTavern Android (unofficial shell), OU=None, O=None, L=None, ST=None, C=ZZ}"
 VALIDITY="${VALIDITY:-10000}"
+
+cleanup_secrets() {
+  unset STORE_PASSWORD STORE_PASSWORD_CONFIRM 2>/dev/null || true
+}
+trap cleanup_secrets EXIT INT TERM
 
 if [ -e "$KEYSTORE" ]; then
   echo "Refusing to overwrite existing $KEYSTORE: reuse it, or set KEYSTORE=<path>." >&2
@@ -30,14 +36,20 @@ fi
 
 # One password for store and key keeps the secret set small; the workflow still
 # passes them separately, so you can split them later without touching the YAML.
+# Password is passed via environment variable to keytool (-storepass:env) to avoid
+# exposing plain-text secrets in process argument lists.
+export STORE_PASSWORD
 keytool -genkeypair -v \
   -keystore "$KEYSTORE" -storetype PKCS12 \
   -alias "$ALIAS" -keyalg RSA -keysize 4096 -validity "$VALIDITY" \
   -dname "$DNAME" \
-  -storepass "$STORE_PASSWORD" -keypass "$STORE_PASSWORD"
+  -storepass:env STORE_PASSWORD -keypass:env STORE_PASSWORD
+cleanup_secrets
 
+chmod 0600 "$KEYSTORE"
 BASE64_FILE="${KEYSTORE}.base64"
 base64 -w0 < "$KEYSTORE" > "$BASE64_FILE" 2>/dev/null || base64 < "$KEYSTORE" | tr -d '\n' > "$BASE64_FILE"
+chmod 0600 "$BASE64_FILE"
 
 cat <<INFO
 

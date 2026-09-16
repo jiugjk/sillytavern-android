@@ -42,10 +42,11 @@ class StService : Service() {
     private val progressReading = AtomicBoolean(false)
     private var lastProgress = ""
     private var reply: Messenger? = null
-    private var phase = "idle"
-    private var detail = ""
-    private var done = 0
-    private var total = 0
+    internal val stateMachine = ServiceStateMachine()
+    private val phase get() = stateMachine.phase
+    private val detail get() = stateMachine.detail
+    private val done get() = stateMachine.done
+    private val total get() = stateMachine.total
     @Volatile private var serverStarted = false
     private lateinit var state: File
     private lateinit var contract: JSONObject
@@ -75,9 +76,10 @@ class StService : Service() {
 
     private fun begin() {
         if (phase != "idle") return
-        phase = "preparing"
+        val session = ++stateMachine.currentSession
+        stateMachine.phase = "preparing"
         publish()
-        if (!processClaimed.compareAndSet(false, true)) { status("failed", "服务进程正在退出，请稍后重试"); return }
+        if (!processClaimed.compareAndSet(false, true)) { status("failed", "服务进程正在退出，请稍后重试", session = session); return }
         state = AppFiles.state(this)
         Thread({
             var lock: FileLock? = null
@@ -103,7 +105,7 @@ class StService : Service() {
                     .put("pageSize", Os.sysconf(OsConstants._SC_PAGESIZE)).put("servicePid", Process.myPid()) }
                 payload = AppFiles.preparePayload(this, contract) { step, n, all ->
                     check(!cancelled()) { "启动已取消" }
-                    status(step, "", n, all)
+                    status(step, "", n, all, isProgress = true, session = session)
                 }
                 check(!cancelled())
                 port = AppFiles.port(state)
@@ -133,21 +135,21 @@ class StService : Service() {
                 // blocking NativeNode.start() call below holds no lock.
                 if (!claimNativeLaunch()) {
                     terminalPhase = "stopped"; terminalDetail = "启动已取消"
-                    status(terminalPhase, terminalDetail)
+                    status(terminalPhase, terminalDetail, session = session)
                     return@Thread
                 }
-                status("starting", "准备本地安装；首次联网下载 ST Staging、插件和依赖")
+                status("starting", "准备本地安装；首次联网下载 ST Staging、插件和依赖", session = session)
                 main.post(monitor)
                 val code = NativeNode.start(arrayOf("node", entry.absolutePath, launchFile.absolutePath))
                 record { it.put("nativeReturnCode", code) }
                 terminalPhase = if (cancelled()) "stopped" else "failed"
                 terminalDetail = "Node已退出（$code）"
-                status(terminalPhase, terminalDetail)
+                status(terminalPhase, terminalDetail, session = session)
             } catch (error: Throwable) {
                 record { it.put("error", error.javaClass.simpleName + ": " + (error.message ?: "")) }
                 terminalPhase = if (cancelled()) "stopped" else "failed"
                 terminalDetail = error.message ?: error.javaClass.simpleName
-                status(terminalPhase, terminalDetail)
+                status(terminalPhase, terminalDetail, session = session)
             } finally {
                 // Persist the terminal phase this thread decided. Reading the
                 // shared `phase` here would race with the main-thread post in
@@ -162,6 +164,7 @@ class StService : Service() {
     private val monitor = object : Runnable {
         override fun run() {
             if (cancelled()) return
+            val session = stateMachine.currentSession
             val readyFile = File(state, "ready.json")
             if (readyFile.exists() && checking.compareAndSet(false, true)) {
                 serverStarted = true
@@ -175,7 +178,7 @@ class StService : Service() {
                         record { it.put("installation", installed).put("payloadId", installed.getString("payloadId")) }
                         val origin = LocalOrigin(port)
                         check(ready.getString("origin") == origin.value && ready.getString("nodeVersion") == contract.getString("nodeVersion"))
-                        status("checking", "检查本机认证、CSRF与tokenizer")
+                        status("checking", "检查本机认证、CSRF与tokenizer", session = session)
                         val transport = AppFiles.readJson(File(state, "transport.json"), 4096)
                         check(transport.getInt("port") == port)
                         val health = ServerHealth.check(origin, transport.getString("username"), transport.getString("password"), ready.getString("sillytavernVersion"))
@@ -183,11 +186,11 @@ class StService : Service() {
                         val info = File(state, "node-info.json")
                         if (info.exists()) record { it.put("node", AppFiles.readJson(info)) }
                         saveDiagnostic("ready")
-                        if (!cancelled()) status("ready", origin.value)
+                        if (!cancelled()) status("ready", origin.value, session = session)
                     } catch (error: Exception) {
                         record { it.put("healthError", error.javaClass.simpleName + ": " + (error.message ?: "")) }
                         try { saveDiagnostic("failed") } catch (_: Exception) { }
-                        status("failed", "启动后检查失败：${error.message}")
+                        status("failed", "启动后检查失败：${error.message}", session = session)
                         main.post { requestStop(preserveFailure = true) }
                     }
                 }, "SillyTavernHealth").start()
@@ -198,9 +201,9 @@ class StService : Service() {
                         if (file.exists()) {
                             val value = AppFiles.readJson(file, 65536)
                             val text = value.toString()
-                            if (text != lastProgress && !cancelled()) {
+                            if (text != lastProgress && !cancelled() && !checking.get()) {
                                 lastProgress = text
-                                status(value.getString("phase"), value.getString("detail"), value.optInt("done"), value.optInt("total"))
+                                status(value.getString("phase"), value.getString("detail"), value.optInt("done"), value.optInt("total"), isProgress = true, session = session)
                             }
                         }
                     } catch (_: Exception) { /* Atomic writer may not have published yet. */ }
@@ -211,8 +214,32 @@ class StService : Service() {
         }
     }
 
-    private fun status(value: String, message: String = "", n: Int = 0, all: Int = 0) {
-        main.post { phase = value; detail = message; done = n; total = all; publish() }
+    internal fun applyStatus(
+        session: Long,
+        value: String,
+        message: String = "",
+        n: Int = 0,
+        all: Int = 0,
+        isProgress: Boolean = false
+    ): Boolean {
+        val changed = stateMachine.transition(session, value, message, n, all, isProgress, cancelled())
+        if (changed) publish()
+        return changed
+    }
+
+    private fun status(
+        value: String,
+        message: String = "",
+        n: Int = 0,
+        all: Int = 0,
+        isProgress: Boolean = false,
+        session: Long = stateMachine.currentSession
+    ) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            applyStatus(session, value, message, n, all, isProgress)
+        } else {
+            main.post { applyStatus(session, value, message, n, all, isProgress) }
+        }
     }
     private fun publish() {
         try {
@@ -235,7 +262,7 @@ class StService : Service() {
             val next = if (current == Launch.NATIVE_CLAIMED) Launch.CANCELLED_NATIVE else Launch.CANCELLED_EARLY
             if (launch.compareAndSet(current, next)) { claimedNative = current == Launch.NATIVE_CLAIMED; break }
         }
-        if (!preserveFailure) status("stopping", "正在停止服务")
+        if (!preserveFailure) status("stopping", "正在停止服务", session = stateMachine.currentSession)
         if (claimedNative) {
             if (serverStarted) Process.sendSignal(Process.myPid(), OsConstants.SIGTERM)
             else Process.killProcess(Process.myPid())

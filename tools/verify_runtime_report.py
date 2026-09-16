@@ -2,6 +2,7 @@
 """Reject host, incomplete, failed, stale or missing runtime-probe device reports."""
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -11,6 +12,14 @@ REQUIRED_TESTS = frozenset({
     'runtime-identity', 'esm-tla', 'fs-atomic', 'crypto', 'icu-unicode', 'wasm',
     'wasm-simd', 'worker', 'fetch-http-stream', 'dns', 'tls-validation', 'https-remote',
 })
+
+
+def valid_pid(value: object) -> bool:
+    return type(value) is int and value > 0
+
+
+def valid_nonce(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r'[a-f0-9]{32}', value) is not None
 
 
 def verify_report(report, lock):
@@ -25,6 +34,8 @@ def verify_report(report, lock):
         raise ValueError('Device tested an outdated/different runtime build')
     if report.get('probeManifest', {}).get('probeIdentity') != probe_manifest()['probeIdentity']:
         raise ValueError('Device tested an outdated/different probe implementation')
+    if not valid_pid(report.get('runnerPid')):
+        raise ValueError('Invalid runner process ID')
     runs = report['runs']
     if len(runs) != 2:
         raise ValueError('Two separate Node service-process runs are required')
@@ -33,7 +44,7 @@ def verify_report(report, lock):
         probe, native_exit = entry['report'], entry['exit']
         if probe.get('mode') != 'android' or probe.get('platform') != 'android' or probe.get('arch') != 'arm64':
             raise ValueError('Host baseline cannot satisfy the Android runtime gate')
-        if probe.get('node') != lock['node']['version']:
+        if probe.get('node') != lock['node']['version']:\
             raise ValueError('Runtime Node version is not the pinned Node 26 version')
         if probe.get('completed') is not True or probe.get('passed') is not True:
             raise ValueError('Incomplete or failed Node probe')
@@ -44,10 +55,15 @@ def verify_report(report, lock):
             raise ValueError('A failed/skipped capability is not a pass')
         if native_exit['exitCode'] != 0 or native_exit.get('error') is not None:
             raise ValueError('Native entry point failed after/before the JS probe')
-        pid, nonce = probe['pid'], probe['nonce']
-        if pid != native_exit['pid'] or pid == report['runnerPid'] or pid in pids:
+        pid, nonce = probe.get('pid'), probe.get('nonce')
+        exit_pid, exit_nonce = native_exit.get('pid'), native_exit.get('nonce')
+        if not valid_pid(pid) or not valid_pid(exit_pid):
+            raise ValueError('Invalid process ID')
+        if not valid_nonce(nonce) or not valid_nonce(exit_nonce):
+            raise ValueError('Invalid probe nonce')
+        if pid != exit_pid or pid == report['runnerPid'] or pid in pids:
             raise ValueError('Node did not use separate restartable service processes')
-        if nonce != native_exit['nonce'] or nonce in nonces:
+        if nonce != exit_nonce or nonce in nonces:
             raise ValueError('Reused or mismatched probe nonce')
         pids.add(pid)
         nonces.add(nonce)
