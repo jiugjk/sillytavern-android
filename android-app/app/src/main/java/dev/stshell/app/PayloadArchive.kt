@@ -107,6 +107,7 @@ class PayloadArchive(manifestBytes: ByteArray, manifestSha: String, val archiveS
         }
         val seen = mutableSetOf<String>()
         var checked = 0
+        val buffer = ByteArray(128 * 1024)
         fun visit(directory: File) {
             for (entry in directory.listFiles() ?: error("Cannot read installed payload")) {
                 require(!Files.isSymbolicLink(entry.toPath())) { "Installed payload contains a symlink" }
@@ -118,7 +119,7 @@ class PayloadArchive(manifestBytes: ByteArray, manifestSha: String, val archiveS
                     if (name == "payload-manifest.json") require(entry.length() == rawManifest.size.toLong() && entry.readBytes().contentEquals(rawManifest))
                     else {
                         val expected = files[name] ?: error("Unexpected installed file: $name")
-                        require(entry.length() == expected.size && entry.inputStream().use(::hash) == expected.sha) { "Installed payload was modified: $name" }
+                        require(entry.length() == expected.size && entry.inputStream().use { hash(it, buffer) } == expected.sha) { "Installed payload was modified: $name" }
                         seen.add(name); checked++
                         if (checked % 128 == 0 || checked == files.size) progress(checked, files.size)
                     }
@@ -130,6 +131,7 @@ class PayloadArchive(manifestBytes: ByteArray, manifestSha: String, val archiveS
     }
 
     companion object {
+        private val HEX_DIGITS = "0123456789abcdef".toCharArray()
         fun safeName(name: String) {
             require(name.isNotEmpty() && !name.startsWith('/') && !name.endsWith('/') && !name.contains('\\') && !name.contains(':')) { "Unsafe ZIP path" }
             require(name.none { it.code < 32 } && name.split('/').none { it.isEmpty() || it == "." || it == ".." || it == ".git" }) { "Unsafe ZIP path" }
@@ -138,11 +140,20 @@ class PayloadArchive(manifestBytes: ByteArray, manifestSha: String, val archiveS
             require(!name.startsWith("server/data/") || name == "server/data/.gitkeep") { "State in payload" }
         }
         fun hash(bytes: ByteArray) = hex(MessageDigest.getInstance("SHA-256").digest(bytes))
-        fun hash(input: InputStream): String {
-            val digest = MessageDigest.getInstance("SHA-256"); val buffer = ByteArray(128 * 1024)
+        fun hash(input: InputStream, buffer: ByteArray = ByteArray(128 * 1024)): String {
+            val digest = MessageDigest.getInstance("SHA-256")
             while (true) { val n = input.read(buffer); if (n < 0) break; digest.update(buffer, 0, n) }
             return hex(digest.digest())
         }
-        private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        private fun hex(bytes: ByteArray): String {
+            val out = CharArray(bytes.size * 2)
+            var i = 0
+            for (b in bytes) {
+                val v = b.toInt() and 0xff
+                out[i++] = HEX_DIGITS[v ushr 4]
+                out[i++] = HEX_DIGITS[v and 0x0f]
+            }
+            return String(out)
+        }
     }
 }

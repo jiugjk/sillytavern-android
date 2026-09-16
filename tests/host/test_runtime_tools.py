@@ -130,6 +130,27 @@ class ReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify_report(self.good, self.lock)
 
+    def test_reject_invalid_pid_types_and_negative(self):
+        for bad_pid in [-1, 0, '20', True, None, 1.5]:
+            report = copy.deepcopy(self.good)
+            report['runs'][0]['report']['pid'] = bad_pid
+            report['runs'][0]['exit']['pid'] = bad_pid
+            with self.subTest(bad_pid=bad_pid), self.assertRaises(ValueError):
+                verify_report(report, self.lock)
+
+        report = copy.deepcopy(self.good)
+        report['runnerPid'] = -5
+        with self.assertRaises(ValueError):
+            verify_report(report, self.lock)
+
+    def test_reject_invalid_nonce_format(self):
+        for bad_nonce in ['', 'abc', 'g' * 32, '0' * 31, '0' * 33, 12345, None, True]:
+            report = copy.deepcopy(self.good)
+            report['runs'][0]['report']['nonce'] = bad_nonce
+            report['runs'][0]['exit']['nonce'] = bad_nonce
+            with self.subTest(bad_nonce=bad_nonce), self.assertRaises(ValueError):
+                verify_report(report, self.lock)
+
 
 if __name__ == '__main__':
     unittest.main()

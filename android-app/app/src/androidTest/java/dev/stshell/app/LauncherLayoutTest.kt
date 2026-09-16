@@ -180,13 +180,14 @@ class LauncherLayoutTest {
             val loaded = CountDownLatch(1)
             instrumentation.runOnMainSync {
                 activity.closeControls()
-                browser = WebView(activity).apply {
+                val view = WebView(activity).apply {
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView, url: String) { loaded.countDown() }
                     }
                 }
-                activity.attachBrowser(requireNotNull(browser))
-                browser.loadDataWithBaseURL("https://layout.test/", "<meta name='viewport' content='width=device-width,initial-scale=1'><body style='margin:0'><input style='position:fixed;bottom:0;left:0;box-sizing:border-box;width:100%;height:48px;font-size:18px' aria-label='Keyboard test'></body>", "text/html", "UTF-8", null)
+                browser = view
+                activity.attachBrowser(view)
+                view.loadDataWithBaseURL("https://layout.test/", "<meta name='viewport' content='width=device-width,initial-scale=1'><body style='margin:0'><input style='position:fixed;bottom:0;left:0;box-sizing:border-box;width:100%;height:48px;font-size:18px' aria-label='Keyboard test'></body>", "text/html", "UTF-8", null)
             }
             assertTrue(loaded.await(15, TimeUnit.SECONDS))
             instrumentation.waitForIdleSync()

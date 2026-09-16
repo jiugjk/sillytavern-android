@@ -303,8 +303,25 @@ export async function prepareOnlineLaunch(input, { progress = () => {} } = {}) {
             }
             // Keep the previous pointer/tree for recovery. Do NOT touch user state.
             if (EXISTS(pointerPath)) {
-                const previous = json(pointerPath, 65536);
-                if (previous.payloadId !== pointer.payloadId) atomicPrivateWrite(path.join(base, 'previous.json'), JSON.stringify(previous));
+                assert(!fs.lstatSync(pointerPath).isSymbolicLink(), 'Pointer file must not be a symbolic link');
+                try {
+                    const previous = json(pointerPath, 65536);
+                    if (previous && typeof previous === 'object' && HEX.test(previous.payloadId)) {
+                        if (previous.payloadId !== pointer.payloadId) {
+                            atomicPrivateWrite(path.join(base, 'previous.json'), JSON.stringify(previous));
+                        }
+                    } else if (reinstall) {
+                        const damaged = path.join(base, '.damaged-pointer-' + crypto.randomUUID());
+                        try { await fsp.rename(pointerPath, damaged); } catch (_) { }
+                    }
+                } catch (error) {
+                    if (reinstall) {
+                        const damaged = path.join(base, '.damaged-pointer-' + crypto.randomUUID());
+                        try { await fsp.rename(pointerPath, damaged); } catch (_) { }
+                    } else {
+                        throw error;
+                    }
+                }
             }
             // Commit last. A failed/aborted install never becomes current.
             atomicPrivateWrite(pointerPath, JSON.stringify(pointer));
@@ -317,6 +334,8 @@ export async function prepareOnlineLaunch(input, { progress = () => {} } = {}) {
     atomicPrivateWrite(launchPath, JSON.stringify(result));
     atomicPrivateWrite(path.join(launch.stateRoot, 'installation-info.json'), JSON.stringify({
         schemaVersion: 1, ...pointer, upstream: manifest.upstream, extensions: manifest.extensions }));
+    // Attest in-process verification to avoid an immediate redundant hash pass in bootstrap
+    globalThis.__ST_VERIFIED_TREE__ = { payloadRoot: path.join(base, pointer.payloadId), manifestSha256: pointer.manifestSha256, payloadId: pointer.payloadId };
     report('starting', '启动本地 ST（普通重启不检查或下载更新）');
     return { launch: result, launchPath, payloadId: pointer.payloadId };
 }

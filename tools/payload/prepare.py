@@ -14,17 +14,8 @@ import tempfile
 import zipfile
 import zlib
 
-from common import ROOT, canonical, check_platform_selection, inventory, read_lock, read_policy, recipe_inputs, safe_name, sha256, verify_zip
+from common import ROOT, canonical, check_platform_selection, inventory, read_lock, read_policy, recipe_inputs, safe_name, sha256, verify_zip, run, capture
 from verify_project import main as verify_project
-
-
-def command(args, **kwargs):
-    print('+', ' '.join(map(str, args)), flush=True)
-    return subprocess.run(list(map(str, args)), check=True, **kwargs)
-
-
-def output(args):
-    return subprocess.check_output(list(map(str, args)), text=True).strip()
 
 
 def dependencies(server):
@@ -73,8 +64,8 @@ def main():
         raise ValueError('Usage: python3 tools/payload/prepare.py (uses checked-in locks, no floating branch flags)')
     verify_project()
     lock, policy = read_lock(), read_policy()
-    node_version = output(['node', '-p', 'process.versions.node'])
-    npm_version = output(['npm', '--version'])
+    node_version = capture(['node', '-p', 'process.versions.node']).strip()
+    npm_version = capture(['npm', '--version']).strip()
     if node_version != lock['node']['version'] or npm_version != policy['npmVersion']:
         raise ValueError(f'Payload build needs Node {lock["node"]["version"]} and npm {policy["npmVersion"]}')
     build = ROOT / 'build'
@@ -87,7 +78,7 @@ def main():
         server = tree / 'server'
         server.mkdir(parents=True)
         with (work / 'upstream.tar').open('wb') as archive:
-            command(['git', 'archive', '--format=tar', lock['sillytavern']['commit']], cwd=ROOT / 'upstream/SillyTavern', stdout=archive)
+            run(['git', 'archive', '--format=tar', lock['sillytavern']['commit']], cwd=ROOT / 'upstream/SillyTavern', stdout=archive)
         with tarfile.open(work / 'upstream.tar') as archive:
             archive.extractall(server, filter='data')
         source_files = {p.relative_to(server).as_posix(): sha256(p) for p in server.rglob('*') if p.is_file()}
@@ -97,7 +88,7 @@ def main():
         (work / 'empty.npmrc').write_text('')
         env = {k: v for k, v in os.environ.items() if not k.lower().startswith('npm_config_') and k != 'NODE_OPTIONS'}
         env.update(NODE_ENV='production', NPM_CONFIG_USERCONFIG=str(work / 'empty.npmrc'), NPM_CONFIG_REGISTRY='https://registry.npmjs.org')
-        command(['npm', 'ci', '--omit=dev', '--ignore-scripts', '--bin-links=false', '--engine-strict', '--no-audit', '--no-fund'], cwd=server, env=env)
+        run(['npm', 'ci', '--omit=dev', '--ignore-scripts', '--bin-links=false', '--engine-strict', '--no-audit', '--no-fund'], cwd=server, env=env)
         for name, expected in source_files.items():
             if sha256(server / name) != expected:
                 raise ValueError(f'Package preparation modified an upstream source file: {name}')

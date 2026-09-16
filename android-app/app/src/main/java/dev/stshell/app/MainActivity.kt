@@ -27,7 +27,7 @@ class MainActivity : Activity() {
     private lateinit var launcher: LauncherLayout
     private var panelStatus: TextView? = null
     private var panelProgress: ProgressBar? = null
-    private var latestState = JSONObject().put("phase", "idle")
+    private var latestState = LauncherUiState()
     private var controlsOpen = false
     private var pendingProtection = false
     private val closePanelOnBack = OnBackInvokedCallback { closeControls() }
@@ -59,7 +59,7 @@ class MainActivity : Activity() {
         setContentView(launcher)
         SessionController.attach(this)
         val restorePanel = savedInstanceState?.getBoolean("controlsOpen") == true
-        if (restorePanel || (savedInstanceState == null && !launcher.hasBrowser() && latestState.optString("phase") == "idle")) {
+        if (restorePanel || (savedInstanceState == null && !launcher.hasBrowser() && latestState.displayPhase == "idle")) {
             launcher.post { if (!isFinishing && !isDestroyed) openControls() }
         }
     }
@@ -67,7 +67,7 @@ class MainActivity : Activity() {
         (view.parent as? ViewGroup)?.removeView(view)
         launcher.browserHost.removeAllViews()
         launcher.browserHost.addView(view, FrameLayout.LayoutParams(-1, -1))
-        launcher.updateState(latestState.optString("phase"), latestState.optString("detail"), latestState.optInt("done"), latestState.optInt("total"))
+        launcher.updateState(latestState.displayPhase, latestState.displayDetail, latestState.progress.done, latestState.progress.total)
     }
     fun openControls() {
         if (controlsOpen || isFinishing || isDestroyed) return
@@ -92,7 +92,7 @@ class MainActivity : Activity() {
         action(R.string.action_start) { SessionController.start() }
         // Page-only recovery: rebuild the WebView while Node keeps running.
         // Offered only when the service is healthy and just the page is broken.
-        if (latestState.optBoolean("canReopenBrowser")) {
+        if (latestState.canReopenBrowser) {
             action(R.string.action_reopen_page) { SessionController.reopenBrowser() }
         }
         action(R.string.action_restart) { confirmServiceAction(getString(R.string.confirm_restart_title)) { SessionController.stop(restart = true) } }
@@ -131,27 +131,26 @@ class MainActivity : Activity() {
         panelStatus = null; panelProgress = null
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
-    fun showState(value: JSONObject) {
-        latestState = JSONObject(value.toString())
-        launcher.updateState(value.optString("phase", "idle"), value.optString("detail"), value.optInt("done"), value.optInt("total"))
+    fun showState(state: LauncherUiState) {
+        latestState = state
+        launcher.updateState(state.displayPhase, state.displayDetail, state.progress.done, state.progress.total)
         updatePanelState()
     }
     private fun updatePanelState() {
-        val value = latestState
-        val phase = value.optString("phase", "idle")
-        val all = value.optInt("total"); val done = value.optInt("done")
-        val guard = value.optJSONObject("background")
-        val protection = if (guard?.optBoolean("enabled") == true) {
+        val state = latestState
+        val phase = state.displayPhase
+        val all = state.progress.total; val done = state.progress.done
+        val protection = if (state.protection.enabled) {
             getString(R.string.status_protection_on,
-                getString(if (guard.optBoolean("wakeHeld")) R.string.status_wake_held else R.string.status_wake_released))
+                getString(if (state.protection.wakeHeld) R.string.status_wake_held else R.string.status_wake_released))
         } else getString(R.string.status_protection_off)
-        val observer = getString(if (value.optJSONObject("observer")?.optBoolean("observerReady") == true)
+        val observer = getString(if (state.observer.observerReady)
             R.string.status_observer_ready else R.string.status_observer_waiting)
-        panelStatus?.text = getString(R.string.status_line, phase, value.optString("detail"),
+        panelStatus?.text = getString(R.string.status_line, phase, state.displayDetail,
             if (all > 0) "$done/$all" else "", protection, observer)
         panelProgress?.apply {
             // ServerPhase owns "is startup in progress", not a string list here.
-            visibility = if (ServerPhase.from(value.optString("serverPhase", phase)).busy) View.VISIBLE else View.GONE
+            visibility = if (state.session.serverPhase.busy) View.VISIBLE else View.GONE
             isIndeterminate = all <= 0
             if (all > 0) { max = all; progress = done }
         }
@@ -208,11 +207,19 @@ class MainActivity : Activity() {
         if (requestCode != OPEN_FILE) return
         val callback = SessionController.fileCallback; SessionController.fileCallback = null
         val uris = mutableListOf<Uri>()
-        if (resultCode == RESULT_OK) {
-            data?.clipData?.let { clips -> if (clips.itemCount <= 256) repeat(clips.itemCount) { uris.add(clips.getItemAt(it).uri) } }
-            if (uris.isEmpty()) data?.data?.let(uris::add)
+        if (resultCode == RESULT_OK && data != null) {
+            val clips = data.clipData
+            if (clips != null) {
+                if (clips.itemCount <= 256) {
+                    for (i in 0 until clips.itemCount) {
+                        clips.getItemAt(i)?.uri?.takeIf { it.scheme == "content" }?.let(uris::add)
+                    }
+                }
+            } else {
+                data.data?.takeIf { it.scheme == "content" }?.let(uris::add)
+            }
         }
-        callback?.onReceiveValue(uris.filter { it.scheme == "content" }.takeIf { it.isNotEmpty() }?.toTypedArray())
+        callback?.onReceiveValue(uris.takeIf { it.isNotEmpty() }?.toTypedArray())
     }
     private fun copyDiagnostic() {
         val value = SessionController.diagnostic().toString(2)

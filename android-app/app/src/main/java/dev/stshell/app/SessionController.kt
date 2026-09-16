@@ -249,24 +249,35 @@ object SessionController {
             override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
                 if (origin.allows(request.url.toString())) null else blocked()
         })
+        val navTracker = BrowserNavigationTracker()
         view.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 if (web === view && origin.allows(url)) {
+                    val navId = navTracker.onPageStarted()
                     observerToken = UUID.randomUUID().toString().replace("-", "")
                     observerInjected = false
                     generation.reset(observerToken)
-                    state = state.copy(browserPhase = BrowserPhase.LOADING, pageLoaded = false)
+                    state = state.copy(browserPhase = BrowserPhase.LOADING, browserDetail = "", pageLoaded = false, mainHttpError = null, dom = null, domCheck = null)
                     BackgroundProtectionService.refresh()
                 }
             }
-            private fun checkDom(view: WebView, attempt: Int = 0) {
-                if (web !== view) return
+            private fun checkDom(view: WebView, navId: Long, attempt: Int = 0) {
+                if (web !== view || navId != navTracker.navigationId || navTracker.mainFrameFailed) return
                 view.evaluateJavascript("(function(){return {chatInput:!!document.getElementById('send_textarea'),publicApi:!!(window.SillyTavern&&window.SillyTavern.getContext),login:location.pathname==='/login'};})()") { result ->
-                    if (web === view) {
+                    if (web === view && navId == navTracker.navigationId && !navTracker.mainFrameFailed) {
                         try {
-                            val dom = JSONObject(result)
-                            state = state.copy(dom = dom)
-                            if (dom.optBoolean("publicApi") && bridgeAvailable && !observerInjected) {
+                            val json = JSONObject(result)
+                            val domStatus = DomStatus(
+                                chatInput = json.optBoolean("chatInput"),
+                                publicApi = json.optBoolean("publicApi"),
+                                login = json.optBoolean("login")
+                            )
+                            if (domStatus.ready) {
+                                state = state.copy(browserPhase = BrowserPhase.READY, browserDetail = "", dom = domStatus, mainHttpError = null, domCheck = "ready")
+                            } else {
+                                state = state.copy(dom = domStatus)
+                            }
+                            if (domStatus.publicApi && bridgeAvailable && !observerInjected) {
                                 val scriptBytes = app.assets.open("app/generation-observer.js").use { it.readBytes() }
                                 val expected = app.assets.open("app-contract.json").bufferedReader().use { JSONObject(it.readText()) }
                                     .getJSONObject("inputs").getString("runtime/android/generation-observer.js")
@@ -275,9 +286,11 @@ object SessionController {
                                 observerInjected = true
                                 view.evaluateJavascript(String(scriptBytes, Charsets.UTF_8).replace("__ST_ANDROID_CONFIG__", config), null)
                             }
-                            if (dom.optBoolean("chatInput") || dom.optBoolean("login")) state = state.copy(mainHttpError = null)
-                            if (!dom.optBoolean("publicApi") && !dom.optBoolean("login") && attempt < 60) main.postDelayed({ checkDom(view, attempt + 1) }, 500)
-                        } catch (_: Exception) { state = state.copy(domCheck = "unavailable") }
+                            if (!domStatus.ready) {
+                                if (attempt < 60) main.postDelayed({ checkDom(view, navId, attempt + 1) }, 500)
+                                else state = state.copy(browserPhase = BrowserPhase.ERROR, browserDetail = "页面加载超时，聊天界面未就绪", domCheck = "timeout")
+                            }
+                        } catch (_: Exception) { state = state.copy(browserPhase = BrowserPhase.ERROR, browserDetail = "页面DOM检查异常", domCheck = "unavailable") }
                         render()
                     }
                 }
@@ -318,18 +331,32 @@ object SessionController {
             override fun onPageFinished(view: WebView, url: String) {
                 initialAuth = false
                 if (web === view && origin.allows(url)) {
-                    // A successful load clears a previous PAGE error. The server
-                    // phase is owned by StService and is not touched here.
-                    state = state.copy(browserPhase = BrowserPhase.READY, browserDetail = "", pageLoaded = true)
+                    if (!navTracker.canFinish(navTracker.navigationId)) return
+                    val navId = navTracker.navigationId
+                    state = state.copy(pageLoaded = true)
                     CookieManager.getInstance().flush()
-                    checkDom(view)
+                    checkDom(view, navId)
                     render()
                 }
             }
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-                if (web === view && request.isForMainFrame) { state = state.copy(mainHttpError = response.statusCode); render() }
+                if (web === view && request.isForMainFrame) {
+                    val status = response.statusCode
+                    state = state.copy(mainHttpError = status)
+                    if (navTracker.onReceivedHttpError(true, status)) {
+                        state = state.copy(browserPhase = BrowserPhase.ERROR, browserDetail = "页面返回 HTTP $status", pageLoaded = false)
+                    }
+                    render()
+                }
             }
-            override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) { handler.cancel() }
+            override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+                handler.cancel()
+                navTracker.onReceivedSslError()
+                if (web === view) {
+                    state = state.copy(browserPhase = BrowserPhase.ERROR, browserDetail = "SSL安全验证失败", pageLoaded = false)
+                    render()
+                }
+            }
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                 initialAuth = false
                 if (web !== view) return true
@@ -347,7 +374,8 @@ object SessionController {
             }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (web === view && request.isForMainFrame) {
-                    state = state.copy(browserPhase = BrowserPhase.ERROR, browserDetail = "页面加载失败：${error.description}")
+                    navTracker.onReceivedError(true)
+                    state = state.copy(browserPhase = BrowserPhase.ERROR, browserDetail = "页面加载失败：${error.description}", pageLoaded = false)
                     render()
                 }
             }
@@ -427,11 +455,18 @@ object SessionController {
     }
     fun protectionChanged() { render() }
     private fun render() {
-        val snapshot = state.toJson()
-            .put("observer", generation.diagnostic(SystemClock.elapsedRealtime()))
-            .put("bridgeAvailable", bridgeAvailable)
-            .put("canReopenBrowser", canReopenBrowser())
-            .put("background", BackgroundProtectionService.diagnostic())
+        val snapshot = LauncherUiState(
+            session = state,
+            observer = ObserverSnapshot(
+                observerReady = generation.diagnostic(SystemClock.elapsedRealtime()).optBoolean("observerReady")
+            ),
+            protection = ProtectionSnapshot(
+                enabled = BackgroundProtectionService.running,
+                wakeHeld = BackgroundProtectionService.diagnostic().optBoolean("wakeHeld")
+            ),
+            bridgeAvailable = bridgeAvailable,
+            canReopenBrowser = canReopenBrowser()
+        )
         activity.get()?.showState(snapshot)
     }
     fun diagnostic(): JSONObject {

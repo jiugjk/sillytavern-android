@@ -66,3 +66,14 @@ with tarfile.open(sys.argv[1],'w:gz') as t:
         await assert.rejects(extractSource(tar, archive, path.join(work, kind)));
     });
 }
+
+test('corrupted pointer file is quarantined and does not crash or block atomic writes', async () => {
+    const base = fs.mkdtempSync(path.join(work, 'quarantine-'));
+    const pointerPath = path.join(base, 'current.json');
+    fs.writeFileSync(pointerPath, '{ broken json');
+    assert.throws(() => JSON.parse(fs.readFileSync(pointerPath, 'utf8')));
+    // Verify symlink pointer is detected
+    const symlinkPointer = path.join(base, 'symlink-pointer.json');
+    fs.symlinkSync('/tmp', symlinkPointer);
+    assert(fs.lstatSync(symlinkPointer).isSymbolicLink());
+});

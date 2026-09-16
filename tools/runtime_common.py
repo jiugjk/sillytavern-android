@@ -29,8 +29,25 @@ def read_lock():
     return lock
 
 
+def runtime_recipe_hashes():
+    recipe = {}
+    patches_dir = ROOT / 'patches/node-runtime'
+    if patches_dir.is_dir():
+        for path in sorted(patches_dir.glob('*.patch')):
+            recipe[f'patches/{path.name}'] = sha256(path)
+    for name in ('tools/build_node.py', 'tools/runtime_common.py'):
+        p = ROOT / name
+        if p.is_file():
+            recipe[name] = sha256(p)
+    return recipe
+
+
 def identity(lock):
-    inputs = {'node': lock['node'], 'android': lock['android']}
+    inputs = {
+        'node': lock['node'],
+        'android': lock['android'],
+        'recipe': runtime_recipe_hashes(),
+    }
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 
@@ -112,11 +129,12 @@ def verify_artifacts(directory, lock, readelf):
         path = (directory / name).resolve()
         if not path.is_relative_to(directory.resolve()) or sha256(path) != expected:
             raise ValueError(f'Runtime checksum/path mismatch: {name}')
-    node_needed = inspect_elf(directory / 'lib/libnode.so', readelf)
+    inspected = {}
+    for path in sorted((directory / 'lib').glob('*.so')):
+        inspected[path.name] = inspect_elf(path, readelf)
+    node_needed = inspected.get('libnode.so', [])
     if 'libc++_shared.so' in node_needed and 'lib/libc++_shared.so' not in files:
         raise ValueError('Missing required libc++_shared.so')
-    for path in (directory / 'lib').glob('*.so'):
-        inspect_elf(path, readelf)
     symbols = capture([readelf, '--dyn-syms', '--wide', directory / 'lib/libnode.so'])
     if not re.search(r'GLOBAL\s+DEFAULT\s+\d+\s+_ZN4node5StartEiPPc(?:\s|$)', symbols):
         raise ValueError('libnode does not export node::Start(int, char**)')
