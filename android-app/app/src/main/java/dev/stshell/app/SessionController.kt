@@ -38,6 +38,11 @@ object SessionController {
     private var observerInjected = false
     private var bridgeAvailable = false
     private var activityVisible = false
+    private var lastSnapshot: LauncherUiState? = null
+    // Phases recur (the payload is verified before Node boots, the installed ST
+    // tree afterwards), so the step shown is the furthest one reached, never the
+    // raw phase index, which would visibly jump backwards mid-install.
+    private var furthestStep = 0
 
     /** Server state and page state are tracked separately; see SessionState. */
     private var state = SessionState()
@@ -59,10 +64,11 @@ object SessionController {
             state = state.copy(
                 serverPhase = phase,
                 serverDetail = data.getString("detail") ?: "",
-                progress = Progress(data.getInt("done"), data.getInt("total")),
+                progress = Progress(data.getInt("done"), data.getInt("total"), ProgressUnit.from(data.getString("unit"))),
                 port = data.getInt("port"),
                 serverPid = data.getInt("servicePid"),
             )
+            furthestStep = if (phase.step == 0) 0 else maxOf(furthestStep, phase.step)
             if (phase == ServerPhase.READY) {
                 try { openBrowser(data.getInt("port")) }
                 catch (error: Exception) {
@@ -103,7 +109,7 @@ object SessionController {
             // page instead of leaving a blank screen that only "restart" fixes.
             reopenBrowser()
         }
-        render()
+        render(force = true)
     }
     fun detach(view: MainActivity) {
         if (activity.get() === view) {
@@ -120,6 +126,7 @@ object SessionController {
             return
         }
         intentionalStop = false
+        furthestStep = ServerPhase.CONNECTING.step
         state = SessionState(serverPhase = ServerPhase.CONNECTING, serverDetail = "连接应用内服务")
         val owner = newConnection(); connection = owner
         bound = app.bindService(Intent(app, StService::class.java), owner, Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT)
@@ -164,6 +171,7 @@ object SessionController {
 
     fun stop(restart: Boolean = false) {
         restartGeneration++
+        furthestStep = 0
         retry = restart; intentionalStop = true
         BackgroundProtectionService.disable(app)
         disposeBrowser()
@@ -185,6 +193,7 @@ object SessionController {
     private fun disconnected() {
         if (!bound && service == null) return
         releaseBinding(); disposeBrowser()
+        furthestStep = 0
         BackgroundProtectionService.disable(app)
         state = SessionState(
             serverPhase = if (intentionalStop) ServerPhase.STOPPED else ServerPhase.FAILED,
@@ -236,6 +245,9 @@ object SessionController {
                 }
             }
         }
+        view.setBackgroundColor(app.getColor(R.color.launcher_window_background))
+        view.overScrollMode = android.view.View.OVER_SCROLL_NEVER
+        view.isScrollbarFadingEnabled = true
         view.settings.javaScriptEnabled = true
         view.settings.domStorageEnabled = true
         view.settings.allowFileAccess = false
@@ -287,8 +299,11 @@ object SessionController {
                                 view.evaluateJavascript(String(scriptBytes, Charsets.UTF_8).replace("__ST_ANDROID_CONFIG__", config), null)
                             }
                             if (!domStatus.ready) {
-                                if (attempt < 60) main.postDelayed({ checkDom(view, navId, attempt + 1) }, 500)
-                                else state = state.copy(browserPhase = BrowserPhase.ERROR, browserDetail = "页面加载超时，聊天界面未就绪", domCheck = "timeout")
+                                if (attempt < DomPollSchedule.attempts) {
+                                    main.postDelayed({ checkDom(view, navId, attempt + 1) }, DomPollSchedule.delay(attempt))
+                                } else {
+                                    state = state.copy(browserPhase = BrowserPhase.ERROR, browserDetail = "页面加载超时，聊天界面未就绪", domCheck = "timeout")
+                                }
                             }
                         } catch (_: Exception) { state = state.copy(browserPhase = BrowserPhase.ERROR, browserDetail = "页面DOM检查异常", domCheck = "unavailable") }
                         render()
@@ -454,7 +469,12 @@ object SessionController {
             .put("activityVisible", activityVisible).put("frontend", generation.diagnostic(now)).put("backend", backend)
     }
     fun protectionChanged() { render() }
-    private fun render() {
+    /**
+     * [force] re-delivers an unchanged snapshot, which a freshly attached
+     * Activity needs; every other caller is a poll or an event that usually
+     * carries no visible change, and re-rendering those costs layout passes.
+     */
+    private fun render(force: Boolean = false) {
         val snapshot = LauncherUiState(
             session = state,
             observer = ObserverSnapshot(
@@ -465,18 +485,40 @@ object SessionController {
                 wakeHeld = BackgroundProtectionService.diagnostic().optBoolean("wakeHeld")
             ),
             bridgeAvailable = bridgeAvailable,
-            canReopenBrowser = canReopenBrowser()
+            canReopenBrowser = canReopenBrowser(),
+            step = furthestStep
         )
+        if (!force && snapshot == lastSnapshot) return
+        lastSnapshot = snapshot
         activity.get()?.showState(snapshot)
     }
-    fun diagnostic(): JSONObject {
-        val result = JSONObject().put("schemaVersion", 1).put("scope", "android-launcher")
+    /** Live state only; the on-disk parts are added by [attachStateFiles]. */
+    private fun diagnosticBase(): JSONObject =
+        JSONObject().put("schemaVersion", 1).put("scope", "android-launcher")
             .put("ui", state.toJson())
             .put("background", BackgroundProtectionService.diagnostic())
             .put("activity", backgroundSnapshot(BackgroundProtectionService.running))
+
+    private fun attachStateFiles(result: JSONObject): JSONObject {
         for (name in listOf("app-diagnostic.json", "node-info.json", "node-exit.json")) {
             try { val file = File(AppFiles.state(app), name); if (file.exists()) result.put(name, AppFiles.readJson(file)) } catch (_: Exception) { }
         }
         return result // No transport.json, cookies, config, chat content or automatic log export.
+    }
+
+    fun diagnostic(): JSONObject = attachStateFiles(diagnosticBase())
+
+    /**
+     * Same content as [diagnostic], with the private-file reads and the JSON
+     * formatting moved off the UI thread; the callback lands on the main thread.
+     */
+    fun diagnosticAsync(callback: (String) -> Unit) {
+        val base = diagnosticBase()
+        io.execute {
+            val text = try { attachStateFiles(base).toString(2) } catch (error: Exception) {
+                JSONObject().put("error", error.javaClass.simpleName).toString(2)
+            }
+            main.post { callback(text) }
+        }
     }
 }

@@ -41,15 +41,6 @@
     <string name="protection_notifications_blocked">通知或保护通知渠道已被禁用，请先在系统设置开启</string>
     <string name="protection_permission_denied">未获得通知权限，后台保护保持关闭；仍可前台使用</string>
 
-    <!-- Status line -->
-    <string name="status_protection_on">保护已开 / CPU唤醒%1$s</string>
-    <string name="status_wake_held">中</string>
-    <string name="status_wake_released">已释放</string>
-    <string name="status_protection_off">保护未开启</string>
-    <string name="status_observer_ready">观察器就绪</string>
-    <string name="status_observer_waiting">观察器未就绪</string>
-    <string name="status_line">%1$s · %2$s %3$s\n%4$s · %5$s</string>
-
     <!-- Diagnostics / logs / about -->
     <string name="diagnostics_clip_label">ST Android diagnostics</string>
     <string name="diagnostics_copied">已复制诊断状态（不含密钥、Cookie、聊天或启动日志）</string>
@@ -72,4 +63,78 @@
     <string name="notification_action_disable">关闭保护</string>
     <string name="notification_channel_name">ST本机会话保护</string>
     <string name="notification_channel_description">用户主动开启的本地WebView与Node会话；停止生成/关闭保护始终可见</string>
+    <!-- Phase labels: internal identifiers never double as display text -->
+    <string name="phase_idle">未启动</string>
+    <string name="phase_connecting">连接服务</string>
+    <string name="phase_preparing">准备运行环境</string>
+    <string name="phase_copying">复制运行文件</string>
+    <string name="phase_unpacking">解压运行文件</string>
+    <string name="phase_verifying">校验安装内容</string>
+    <string name="phase_downloading">下载中</string>
+    <string name="phase_dependencies">安装依赖</string>
+    <string name="phase_starting">启动服务</string>
+    <string name="phase_checking">启动检查</string>
+    <string name="phase_ready">运行中</string>
+    <string name="phase_stopping">正在停止</string>
+    <string name="phase_stopped">已停止</string>
+    <string name="phase_failed">启动失败</string>
+    <string name="phase_browser_error">页面异常</string>
+
+    <!-- Download / install / verify progress -->
+    <string name="progress_step">步骤 %1$d/%2$d</string>
+    <string name="progress_percent">%1$d%%</string>
+    <string name="progress_items">%1$d/%2$d 项</string>
+    <string name="progress_items_open">已处理 %1$d 项</string>
+    <string name="progress_working">进行中…</string>
+    <string name="progress_detail_empty">—</string>
+
+    <!-- Control panel sections -->
+    <string name="section_service">服务控制</string>
+    <string name="section_update">更新与维护</string>
+    <string name="section_system">系统与后台</string>
+    <string name="section_diagnostics">诊断与关于</string>
+
+    <!-- Update check -->
+    <string name="action_check_update">检查更新</string>
+    <string name="update_title">检查更新</string>
+    <string name="update_checking">正在向 GitHub 查询最新版本…</string>
+    <string name="update_none">本体、内置插件与启动器均为最新版本</string>
+    <string name="update_available_summary">发现 %1$d 项可更新</string>
+    <string name="update_unavailable_summary">%1$d 项无法获取最新版本，请检查网络后重试</string>
+    <string name="update_content_missing">本体与内置插件尚未安装或安装记录不可用；仅检查启动器 APK。</string>
+    <string name="update_app_current_only">启动器已是最新版本</string>
+    <string name="update_hide">关闭（后台继续检查）</string>
+    <string name="update_state_current">已是最新</string>
+    <string name="update_state_available">有更新</string>
+    <string name="update_state_unknown">无法获取</string>
+    <string name="update_component_app">启动器 APK</string>
+    <string name="update_component_server">SillyTavern 本体</string>
+    <string name="update_component_extension">内置插件</string>
+    <string name="update_revision">%1$s → %2$s</string>
+    <string name="update_revision_same">%1$s</string>
+    <string name="update_action_download">下载并更新本体</string>
+    <string name="update_action_release">前往下载 APK</string>
+    <string name="update_app_hint">启动器自身需在 GitHub 下载新版 APK 手动安装；本体与内置插件可直接在应用内更新。</string>
+    <string name="update_confirm_title">下载并更新本体与内置插件？</string>
+    <string name="update_failed">检查更新失败：%1$s</string>
+    <string name="update_network_unavailable">网络不可用</string>
+
+    <!-- Repository / about -->
+    <string name="action_open_repository">打开项目仓库</string>
+    <string name="about_repository_url" translatable="false">https://github.com/jiugjk/sillytavern-android</string>
+    <string name="about_releases_url" translatable="false">https://github.com/jiugjk/sillytavern-android/releases/latest</string>
+    <string name="about_version">版本 %1$s</string>
+    <string name="about_repository_label">项目仓库：%1$s</string>
+    <string name="about_license_button">开源许可证</string>
+    <string name="about_license_loading">正在载入许可证全文…</string>
+    <string name="open_link_failed">无法打开链接，请手动访问项目仓库</string>
+    <string name="diagnostics_preparing">正在收集诊断信息…</string>
+    <string name="startup_log_loading">正在读取启动日志…</string>
+
+    <!-- Status chips -->
+    <string name="chip_protection_on">后台保护已开</string>
+    <string name="chip_protection_off">后台保护未开</string>
+    <string name="chip_wake_held">CPU 唤醒中</string>
+    <string name="chip_observer_ready">观察器就绪</string>
+    <string name="chip_observer_waiting">观察器未就绪</string>
 </resources>

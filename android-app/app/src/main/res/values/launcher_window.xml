@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="launcher_window_background">#101010</color>
-    <color name="launcher_on_window">#E5E5E5</color>
     <color name="launcher_handle">#A0A6AD</color>
     <color name="launcher_handle_pressed">#E1E4E8</color>
     <style name="LauncherWindowTheme" parent="android:style/Theme.Material.Light.NoActionBar">

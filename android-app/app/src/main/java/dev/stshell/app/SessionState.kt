@@ -35,6 +35,27 @@ enum class ServerPhase(val id: String) {
             this == UNPACKING || this == VERIFYING || this == STARTING || this == CHECKING ||
             this == DOWNLOADING || this == DEPENDENCIES
 
+    /**
+     * 1-based position in the observable startup pipeline, or 0 for phases that
+     * are not part of one. A run skips the steps it does not need (an offline
+     * start never downloads) and a phase can recur, so the launcher reports the
+     * furthest step reached rather than the raw value; see LauncherUiState.step.
+     */
+    val step: Int
+        get() = when (this) {
+            CONNECTING -> 1
+            PREPARING -> 2
+            COPYING -> 3
+            UNPACKING -> 4
+            VERIFYING -> 5
+            DOWNLOADING -> 6
+            DEPENDENCIES -> 7
+            STARTING -> 8
+            CHECKING -> 9
+            // READY and the terminal phases are not steps of a startup.
+            else -> 0
+        }
+
     companion object {
         fun from(id: String?): ServerPhase = entries.firstOrNull { it.id == id } ?: IDLE
     }
@@ -56,9 +77,12 @@ enum class BrowserPhase(val id: String) {
     }
 }
 
-/** Unpacking/verifying progress, as counted items. */
-data class Progress(val done: Int = 0, val total: Int = 0) {
+/** Download/unpack/verify progress. [unit] says what done/total count. */
+data class Progress(val done: Int = 0, val total: Int = 0, val unit: ProgressUnit = ProgressUnit.ITEMS) {
     val known: Boolean get() = total > 0
+
+    /** 0..100 while the total is known; null keeps the bar indeterminate. */
+    val percent: Int? get() = InstallProgress.percentOf(done, total)
 }
 
 /** Immutable snapshot of DOM availability flags extracted from the WebView. */
@@ -114,6 +138,8 @@ data class SessionState(
         .put("browserDetail", browserDetail)
         .put("done", progress.done)
         .put("total", progress.total)
+        .put("progressUnit", progress.unit.id)
+        .put("step", serverPhase.step)
         .put("port", port)
         .put("pageLoaded", pageLoaded)
         .apply {
@@ -141,6 +167,8 @@ data class LauncherUiState(
     val protection: ProtectionSnapshot = ProtectionSnapshot(),
     val bridgeAvailable: Boolean = false,
     val canReopenBrowser: Boolean = false,
+    /** Furthest startup step reached in this run; 0 once there is nothing to report. */
+    val step: Int = 0,
 ) {
     val displayPhase: String get() = session.displayPhase
     val displayDetail: String get() = session.displayDetail
@@ -199,7 +227,8 @@ class ServiceStateMachine(
     var detail: String = "",
     var done: Int = 0,
     var total: Int = 0,
-    var currentSession: Long = 0L
+    var currentSession: Long = 0L,
+    var unit: ProgressUnit = ProgressUnit.ITEMS
 ) {
     fun transition(
         session: Long,
@@ -208,7 +237,8 @@ class ServiceStateMachine(
         n: Int = 0,
         all: Int = 0,
         isProgress: Boolean = false,
-        cancelled: Boolean = false
+        cancelled: Boolean = false,
+        progressUnit: ProgressUnit = ProgressUnit.ITEMS
     ): Boolean {
         if (session != currentSession) return false
         if (cancelled && newPhase != "stopping" && newPhase != "stopped" && newPhase != "failed") return false
@@ -236,6 +266,34 @@ class ServiceStateMachine(
         detail = message
         done = n
         total = all
+        unit = progressUnit
         return true
+    }
+}
+
+/**
+ * Cadence for polling the page for chat-ready DOM markers. Early attempts are
+ * cheap and frequent so a fast page is detected immediately; once the page is
+ * plainly slow the interval widens, which keeps a long install or a stalled
+ * page from running an `evaluateJavascript` round trip twice a second for
+ * half a minute. The overall budget is unchanged.
+ */
+object DomPollSchedule {
+    /** Total time the page gets to expose a chat input or the login form. */
+    const val BUDGET_MS = 30_000L
+
+    /** Delay before the attempt following [attempt] (0-based). */
+    fun delay(attempt: Int): Long = when {
+        attempt < 6 -> 250L
+        attempt < 16 -> 500L
+        else -> 1_000L
+    }
+
+    /** Number of attempts that fit in [BUDGET_MS]. */
+    val attempts: Int = run {
+        var elapsed = 0L
+        var count = 0
+        while (elapsed + delay(count) <= BUDGET_MS) { elapsed += delay(count); count++ }
+        count
     }
 }

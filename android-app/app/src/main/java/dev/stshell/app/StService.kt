@@ -12,6 +12,7 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.channels.FileLock
 import java.nio.file.Files
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -41,6 +42,12 @@ class StService : Service() {
     private val checking = AtomicBoolean(false)
     private val progressReading = AtomicBoolean(false)
     private var lastProgress = ""
+    private var lastProgressStamp = 0L to 0L
+    // One reusable worker instead of a fresh Thread per 500ms poll: the monitor
+    // runs for the whole install, and thread churn is pure overhead there.
+    private val reader = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "InstallProgress").apply { isDaemon = true }
+    }
     private var reply: Messenger? = null
     internal val stateMachine = ServiceStateMachine()
     private val phase get() = stateMachine.phase
@@ -105,7 +112,8 @@ class StService : Service() {
                     .put("pageSize", Os.sysconf(OsConstants._SC_PAGESIZE)).put("servicePid", Process.myPid()) }
                 payload = AppFiles.preparePayload(this, contract) { step, n, all ->
                     check(!cancelled()) { "启动已取消" }
-                    status(step, "", n, all, isProgress = true, session = session)
+                    // Copy/unpack/verify all count payload members, never bytes.
+                    status(step, "", n, all, isProgress = true, session = session, unit = ProgressUnit.ITEMS)
                 }
                 check(!cancelled())
                 port = AppFiles.port(state)
@@ -138,7 +146,9 @@ class StService : Service() {
                     status(terminalPhase, terminalDetail, session = session)
                     return@Thread
                 }
-                status("starting", "准备本地安装；首次联网下载 ST Staging、插件和依赖", session = session)
+                // The installer reports "starting" itself once ST is about to
+                // launch; entering Node is still preparation.
+                status("preparing", "准备本地安装；首次联网下载 ST Staging、插件和依赖", session = session)
                 main.post(monitor)
                 val code = NativeNode.start(arrayOf("node", entry.absolutePath, launchFile.absolutePath))
                 record { it.put("nativeReturnCode", code) }
@@ -195,20 +205,25 @@ class StService : Service() {
                     }
                 }, "SillyTavernHealth").start()
             } else if (!checking.get()) {
-                if (progressReading.compareAndSet(false, true)) Thread({
+                if (!reader.isShutdown && progressReading.compareAndSet(false, true)) reader.execute {
                     try {
                         val file = File(state, "install-progress.json")
-                        if (file.exists()) {
+                        // The installer publishes by atomic rename, so an unchanged
+                        // (mtime, size) pair means there is nothing new to parse.
+                        val stamp = if (file.isFile) file.lastModified() to file.length() else 0L to 0L
+                        if (stamp != lastProgressStamp && stamp.second > 0) {
+                            lastProgressStamp = stamp
                             val value = AppFiles.readJson(file, 65536)
                             val text = value.toString()
                             if (text != lastProgress && !cancelled() && !checking.get()) {
                                 lastProgress = text
-                                status(value.getString("phase"), value.getString("detail"), value.optInt("done"), value.optInt("total"), isProgress = true, session = session)
+                                status(value.getString("phase"), value.getString("detail"), value.optInt("done"), value.optInt("total"),
+                                    isProgress = true, session = session, unit = ProgressUnit.from(value.optString("unit")))
                             }
                         }
                     } catch (_: Exception) { /* Atomic writer may not have published yet. */ }
                     finally { progressReading.set(false) }
-                }, "InstallProgress").start()
+                }
                 main.postDelayed(this, 500)
             }
         }
@@ -220,9 +235,10 @@ class StService : Service() {
         message: String = "",
         n: Int = 0,
         all: Int = 0,
-        isProgress: Boolean = false
+        isProgress: Boolean = false,
+        unit: ProgressUnit = ProgressUnit.ITEMS
     ): Boolean {
-        val changed = stateMachine.transition(session, value, message, n, all, isProgress, cancelled())
+        val changed = stateMachine.transition(session, value, message, n, all, isProgress, cancelled(), unit)
         if (changed) publish()
         return changed
     }
@@ -233,18 +249,23 @@ class StService : Service() {
         n: Int = 0,
         all: Int = 0,
         isProgress: Boolean = false,
-        session: Long = stateMachine.currentSession
+        session: Long = stateMachine.currentSession,
+        unit: ProgressUnit = ProgressUnit.ITEMS
     ) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            applyStatus(session, value, message, n, all, isProgress)
+            applyStatus(session, value, message, n, all, isProgress, unit)
         } else {
-            main.post { applyStatus(session, value, message, n, all, isProgress) }
+            main.post { applyStatus(session, value, message, n, all, isProgress, unit) }
         }
     }
     private fun publish() {
         try {
             reply?.send(Message.obtain(null, STATUS).apply {
-                data = Bundle().apply { putString("phase", phase); putString("detail", detail); putInt("done", done); putInt("total", total); putInt("port", port); putInt("servicePid", Process.myPid()) }
+                data = Bundle().apply {
+                    putString("phase", phase); putString("detail", detail)
+                    putInt("done", done); putInt("total", total); putString("unit", stateMachine.unit.id)
+                    putInt("port", port); putInt("servicePid", Process.myPid())
+                }
             })
         } catch (_: RemoteException) { reply = null }
     }
@@ -273,7 +294,7 @@ class StService : Service() {
         main.postDelayed({ Process.killProcess(Process.myPid()) }, 10_000)
     }
     override fun onTaskRemoved(rootIntent: Intent?) { requestStop(); super.onTaskRemoved(rootIntent) }
-    override fun onDestroy() { requestStop(); super.onDestroy() }
+    override fun onDestroy() { requestStop(); reader.shutdownNow(); super.onDestroy() }
 
     companion object {
         const val CONNECT = 1; const val STOP = 2; const val STATUS = 3

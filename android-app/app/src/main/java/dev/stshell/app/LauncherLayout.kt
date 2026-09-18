@@ -3,6 +3,8 @@ package dev.stshell.app
 
 import android.content.Context
 import android.graphics.Rect
+import android.graphics.Typeface
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -11,7 +13,6 @@ import android.view.WindowInsets
 import android.view.WindowInsetsAnimation
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
 import kotlin.math.max
 import kotlin.math.min
@@ -29,11 +30,19 @@ class LauncherLayout(
         orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
         setPadding(dp(24), dp(24), dp(24), dp(24))
     }
+    // Startup card: the same phase/detail/progress vocabulary as the panel, so
+    // the first-run install reads identically before the WebView exists.
+    private val emptyCard = LauncherStyle.card(context).apply { id = R.id.launcher_empty_card }
     private val emptyText = TextView(context).apply {
-        id = R.id.launcher_empty_text; gravity = Gravity.CENTER
-        setTextColor(context.getColor(R.color.launcher_on_window))
+        id = R.id.launcher_empty_text
+        setTextColor(context.getColor(R.color.launcher_text_primary))
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        typeface = Typeface.DEFAULT_BOLD
+        compoundDrawablePadding = dp(8)
     }
-    private val startupProgress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal)
+    private val emptyDetail = LauncherStyle.body(context, 13f).apply { id = R.id.launcher_empty_detail }
+    private val emptyMeasure = LauncherStyle.body(context, 12f).apply { id = R.id.launcher_empty_progress }
+    private val startupProgress = LauncherStyle.progressBar(context)
     private val floating = object : EdgeHandleView(context) {
         override fun onTouchEvent(event: MotionEvent): Boolean = handleTouch(event)
         override fun performClick(): Boolean = super.performClick()
@@ -45,17 +54,15 @@ class LauncherLayout(
     }
     private val shade = FrameLayout(context).apply {
         id = R.id.launcher_controls_overlay
-        setBackgroundColor(0x66000000)
+        setBackgroundColor(context.getColor(R.color.launcher_scrim))
         isClickable = true
         visibility = GONE
     }
     private var sheet: View? = null
     private var panelVisible = false
     private var anchor = initialAnchor
-    private var phase = "idle"
-    private var detail = ""
-    private var progressDone = 0
-    private var progressTotal = 0
+    private var state = LauncherUiState()
+    private var renderedState: LauncherUiState? = null
     private var imeVisible = false
     private var finalInsets: WindowInsets? = null
     private val imeAnimations = mutableSetOf<WindowInsetsAnimation>()
@@ -75,8 +82,13 @@ class LauncherLayout(
         id = R.id.launcher_root
         setBackgroundColor(context.getColor(R.color.launcher_window_background))
         addView(browserHost, LayoutParams(-1, -1))
-        emptyState.addView(emptyText, LinearLayout.LayoutParams(-1, -2))
-        emptyState.addView(startupProgress, LinearLayout.LayoutParams(-1, -2))
+        emptyCard.addView(emptyText, LinearLayout.LayoutParams(-1, -2))
+        emptyCard.addView(emptyDetail, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        emptyCard.addView(startupProgress, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(14) })
+        emptyCard.addView(emptyMeasure, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        emptyState.addView(emptyCard, LinearLayout.LayoutParams(-1, -2).apply {
+            marginStart = dp(4); marginEnd = dp(4)
+        })
         addView(emptyState, LayoutParams(-1, -1))
         addView(floating, LayoutParams(handleWidth, handleHeight, Gravity.TOP or Gravity.LEFT))
         addView(shade, LayoutParams(-1, -1))
@@ -136,20 +148,35 @@ class LauncherLayout(
         return anchor
     }
     fun hasBrowser() = browserHost.childCount > 0
-    fun updateState(value: String, message: String, done: Int, total: Int) {
-        phase = value; detail = message; progressDone = done; progressTotal = total
+    fun updateState(value: LauncherUiState) {
+        state = value
         updateEmptyState()
     }
     private fun updateEmptyState() {
-        emptyState.visibility = if (hasBrowser()) GONE else VISIBLE
-        if (hasBrowser()) return
-        val busy = ServerPhase.from(phase).busy
-        emptyText.text = if (busy || phase == ServerPhase.FAILED.id || phase == BrowserPhase.ERROR.id) {
-            listOf(phase, detail, if (progressTotal > 0) "$progressDone/$progressTotal" else "").filter { it.isNotEmpty() }.joinToString(" · ")
-        } else context.getString(R.string.launcher_open_controls)
+        val attached = hasBrowser()
+        emptyState.visibility = if (attached) GONE else VISIBLE
+        // onLayout re-enters here on every pass; nothing below changes unless the
+        // session state did, and the WebView covers the card anyway.
+        if (attached || state == renderedState) return
+        renderedState = state
+        val phase = state.displayPhase
+        val busy = state.session.serverPhase.busy
+        val failed = phase == ServerPhase.FAILED.id || phase == BrowserPhase.ERROR.id
+        val idle = !busy && !failed
+        emptyText.text = if (idle) context.getString(R.string.launcher_open_controls)
+            else context.getString(InstallProgress.labelRes(phase))
+        LauncherStyle.applyDot(emptyText, context.getColor(
+            if (idle) R.color.launcher_text_secondary else InstallProgress.toneRes(phase)))
+        val detail = state.displayDetail
+        emptyDetail.text = detail
+        emptyDetail.visibility = if (!idle && detail.isNotEmpty()) VISIBLE else GONE
+        val measure = InstallProgress.measure(context, state.progress)
+        emptyMeasure.text = measure.ifEmpty { context.getString(R.string.progress_working) }
+        emptyMeasure.visibility = if (busy) VISIBLE else GONE
         startupProgress.visibility = if (busy) VISIBLE else GONE
-        startupProgress.isIndeterminate = progressTotal <= 0
-        if (progressTotal > 0) { startupProgress.max = progressTotal; startupProgress.progress = progressDone }
+        val percent = state.progress.percent
+        startupProgress.isIndeterminate = percent == null
+        if (percent != null) { startupProgress.max = 100; startupProgress.progress = percent }
     }
     fun showPanel(panel: View, dismiss: () -> Unit) {
         cancelGesture()
@@ -157,7 +184,7 @@ class LauncherLayout(
         sheet = panel
         panel.isClickable = true
         shade.setOnClickListener { dismiss() }
-        shade.addView(panel, LayoutParams(-1, dp(520), Gravity.BOTTOM))
+        shade.addView(panel, LayoutParams(-1, dp(560), Gravity.BOTTOM))
         panelVisible = true; shade.visibility = VISIBLE
         resizeSheet(); updateFloatingVisibility()
     }
@@ -168,7 +195,7 @@ class LauncherLayout(
     }
     private fun resizeSheet() {
         val panel = sheet ?: return
-        val target = min(dp(520), (usableHeight() * 0.8f).toInt()).coerceAtLeast(0)
+        val target = min(dp(560), (usableHeight() * 0.86f).toInt()).coerceAtLeast(0)
         val params = panel.layoutParams as LayoutParams
         if (params.height != target) { params.height = target; panel.layoutParams = params }
     }
