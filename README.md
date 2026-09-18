@@ -1,5 +1,7 @@
 # SillyTavern Android
 
+**简体中文** | [English](README.en.md)
+
 [![Android](https://img.shields.io/badge/Android-14%2B%20(API%2034%2B)-brightgreen.svg)](https://developer.android.com)
 [![Architecture](https://img.shields.io/badge/Arch-arm64--v8a-blue.svg)](https://developer.android.com/ndk)
 [![Node.js](https://img.shields.io/badge/Node.js-26-green.svg)](https://nodejs.org)
