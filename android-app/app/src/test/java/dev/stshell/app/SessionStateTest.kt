@@ -230,4 +230,29 @@ class SessionStateTest {
         assertEquals("ready", readyState.displayPhase)
         assertEquals(true, readyState.toJson().optJSONObject("dom")?.optBoolean("chatInput"))
     }
+
+    @Test fun progressUnitSurvivesTheDiagnosticRoundTrip() {
+        val state = SessionState(serverPhase = ServerPhase.DOWNLOADING,
+            progress = Progress(1_048_576, 4_194_304, ProgressUnit.BYTES))
+        val json = state.toJson()
+        assertEquals("bytes", json.getString("progressUnit"))
+        assertEquals(1_048_576, json.getInt("done"))
+        assertEquals(ServerPhase.DOWNLOADING.step, json.getInt("step"))
+        assertEquals(25, state.progress.percent)
+    }
+
+    @Test fun domPollingStaysInsideItsBudget() {
+        var elapsed = 0L
+        for (attempt in 0 until DomPollSchedule.attempts) {
+            val delay = DomPollSchedule.delay(attempt)
+            assertTrue("polling must never busy-loop", delay >= 250L)
+            elapsed += delay
+        }
+        assertTrue("budget overrun: $elapsed", elapsed <= DomPollSchedule.BUDGET_MS)
+        // The next attempt would exceed the budget, so the schedule is maximal.
+        assertTrue(elapsed + DomPollSchedule.delay(DomPollSchedule.attempts) > DomPollSchedule.BUDGET_MS)
+        // Early attempts stay fast so a quick page is detected immediately.
+        assertTrue(DomPollSchedule.delay(0) < DomPollSchedule.delay(DomPollSchedule.attempts - 1))
+        assertTrue(DomPollSchedule.attempts in 20..60)
+    }
 }

@@ -31,9 +31,9 @@ async function hashFile(file) {
     for await (const block of fs.createReadStream(file)) hash.update(block);
     return hash.digest('hex');
 }
-export async function treeInventory(root) {
+export async function treeInventory(root, onFile = () => {}) {
     const files = {}, directories = [];
-    let totalBytes = 0, count = 0;
+    let totalBytes = 0, count = 0, hashed = 0;
     async function visit(dir, prefix = '') {
         for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
             const name = prefix + entry.name;
@@ -49,19 +49,23 @@ export async function treeInventory(root) {
                 assert(totalBytes <= MAX_BYTES, 'Installation exceeds size limit');
                 assert(!/\.(node|so(?:\.\d+)*|dll|exe|dylib)$/i.test(name) && !name.endsWith('/binding.gyp'), 'Native dependency needs an Android-specific build');
                 files[name] = { size: stat.size, sha256: await hashFile(full) };
+                onFile(++hashed);
             }
         }
     }
     await visit(root);
     return { files: Object.fromEntries(Object.entries(files).sort()), directories: directories.sort(), totalBytes };
 }
-export async function verifyInstallation(root, expectedSha) {
+export async function verifyInstallation(root, expectedSha, onProgress = () => {}) {
     assert(HEX.test(expectedSha), 'Invalid installed manifest digest');
     assert(!fs.lstatSync(root).isSymbolicLink(), 'Installed root cannot be a symlink');
     const file = path.join(root, 'payload-manifest.json');
     const manifest = json(file);
     assert.equal(await hashFile(file), expectedSha, 'Installed manifest changed');
-    const actual = await treeInventory(root);
+    // The member count is known up front, so verification can report a real
+    // fraction instead of leaving the launcher on an indeterminate spinner.
+    const total = Object.keys(manifest.files || {}).length;
+    const actual = await treeInventory(root, done => onProgress(done, total));
     assert.deepEqual(actual.files, manifest.files, 'Installed content changed; repair the installation (user data is separate)');
     assert.deepEqual(actual.directories, manifest.directories, 'Installed directories changed');
     assert.equal(actual.totalBytes, manifest.totalBytes);
@@ -229,9 +233,18 @@ export async function prepareOnlineLaunch(input, { progress = () => {} } = {}) {
     const reinstall = EXISTS(reinstallPath);
     if (reinstall) assert.equal(json(reinstallPath, 4096).schemaVersion, 1, 'Invalid reinstall request');
     const progressFile = path.join(launch.stateRoot, 'install-progress.json');
-    const report = (phase, detail, done = 0, total = 0) => {
-        atomicPrivateWrite(progressFile, JSON.stringify({ schemaVersion: 1, phase, detail, done, total }));
-        progress({ phase, detail, done, total });
+    const report = (phase, detail, done = 0, total = 0, unit = 'items') => {
+        atomicPrivateWrite(progressFile, JSON.stringify({ schemaVersion: 1, phase, detail, done, total, unit }));
+        progress({ phase, detail, done, total, unit });
+    };
+    const throttled = (phase, detail, unit = 'items', interval = 300) => {
+        let last = 0;
+        return (done, total = 0) => {
+            const now = Date.now();
+            if (now - last < interval) return;
+            last = now;
+            report(phase, detail, done, total, unit);
+        };
     };
     // After process death, the native kernel lock makes these abandoned stages
     // unambiguously ours. Never clean state, the active tree or unrelated names.
@@ -241,7 +254,8 @@ export async function prepareOnlineLaunch(input, { progress = () => {} } = {}) {
         pointer = json(pointerPath, 65536);
         assert(HEX.test(pointer.payloadId), 'Invalid active installation pointer');
         report('verifying', '校验已安装的 ST 与全局插件');
-        manifest = await verifyInstallation(path.join(base, pointer.payloadId), pointer.manifestSha256);
+        manifest = await verifyInstallation(path.join(base, pointer.payloadId), pointer.manifestSha256,
+            throttled('verifying', '校验已安装的 ST 与全局插件'));
         assert.equal(pointer.installerSha256, launch.manifestSha256, '安装器已更新，请使用“重新下载本体与内置插件”；用户数据保持不变');
     } else {
         const stage = path.join(base, '.install-' + crypto.randomUUID());
@@ -257,18 +271,30 @@ export async function prepareOnlineLaunch(input, { progress = () => {} } = {}) {
             for (const spec of [config.server, ...config.extensions]) resolved.push(await resolve(spec, work));
             const server = path.join(tree, 'server');
             report('downloading', '下载 SillyTavern Staging');
-            const upstream = await fetchSource(resolved[0], work, server, tar, (n, all) => report('downloading', '下载 SillyTavern Staging', n, all));
-            const source = await treeInventory(tree);
+            const upstream = await fetchSource(resolved[0], work, server, tar,
+                (n, all) => report('downloading', '下载 SillyTavern Staging', n, all, 'bytes'));
+            report('verifying', '登记 ST 源码文件哈希');
+            const source = await treeInventory(tree, throttled('verifying', '登记 ST 源码文件哈希'));
             report('dependencies', '安装 ST 锁定的生产依赖（首次启动可能较久）');
             await installDependencies(server, path.join(shell, 'npm'), path.join(base, 'npm-cache'));
-            for (const [name, expected] of Object.entries(source.files)) assert.equal(await hashFile(path.join(tree, name)), expected.sha256, 'Dependency installation modified upstream source');
+            const sourceNames = Object.entries(source.files);
+            const sourceCheck = throttled('verifying', '校验依赖安装未改动上游源码');
+            report('verifying', '校验依赖安装未改动上游源码', 0, sourceNames.length);
+            let checked = 0;
+            for (const [name, expected] of sourceNames) {
+                assert.equal(await hashFile(path.join(tree, name)), expected.sha256, 'Dependency installation modified upstream source');
+                sourceCheck(++checked, sourceNames.length);
+            }
             const extensions = [];
-            for (const spec of resolved.slice(1)) {
+            const plugins = resolved.slice(1);
+            for (const [index, spec] of plugins.entries()) {
                 safe(spec.name);
                 const dest = path.join(tree, GLOBAL, spec.name);
                 assert(!EXISTS(dest), 'Bundled extension would overwrite upstream files');
-                report('downloading', `下载内置全局插件：${spec.name}`);
-                const receipt = await fetchSource(spec, work, dest, tar, (n, all) => report('downloading', `下载 ${spec.name}`, n, all));
+                const label = `下载内置全局插件 (${index + 1}/${plugins.length})：${spec.name}`;
+                report('downloading', label);
+                const receipt = await fetchSource(spec, work, dest, tar,
+                    (n, all) => report('downloading', label, n, all, 'bytes'));
                 extensions.push(verifyExtension(dest, receipt));
             }
             const targetShell = path.join(tree, 'shell'); fs.mkdirSync(targetShell);
@@ -277,7 +303,8 @@ export async function prepareOnlineLaunch(input, { progress = () => {} } = {}) {
             const version = json(path.join(server, 'package.json')).version;
             report('verifying', '校验安装内容，生成提交及文件哈希记录');
             const content = { schemaVersion: 1, upstream: { ...upstream, version }, extensions,
-                installerSha256: launch.manifestSha256, ...(await treeInventory(tree)) };
+                installerSha256: launch.manifestSha256,
+                ...(await treeInventory(tree, throttled('verifying', '校验安装内容，生成提交及文件哈希记录'))) };
             const payloadId = sha(JSON.stringify(content));
             manifest = { ...content, payloadId };
             const manifestBytes = JSON.stringify(manifest);

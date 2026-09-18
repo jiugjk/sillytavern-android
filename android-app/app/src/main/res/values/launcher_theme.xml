@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher chrome palette. The panel is drawn in code (there is no XML layout),
+  so every colour it uses lives here instead of being hard-coded in Kotlin.
+  Values are a dark surface ramp plus one accent, matching the immersive WebView.
+-->
+<resources>
+    <color name="launcher_surface">#14161B</color>
+    <color name="launcher_surface_raised">#1B1E25</color>
+    <color name="launcher_surface_sunken">#0F1115</color>
+    <color name="launcher_outline">#2A2F39</color>
+    <color name="launcher_grabber">#3A414E</color>
+    <color name="launcher_text_primary">#ECEFF4</color>
+    <color name="launcher_text_secondary">#98A2B3</color>
+    <color name="launcher_accent">#7C6CF5</color>
+    <color name="launcher_accent_pressed">#6A59E8</color>
+    <color name="launcher_accent_soft">#221F3D</color>
+    <color name="launcher_on_accent">#FFFFFF</color>
+    <color name="launcher_success">#47C97E</color>
+    <color name="launcher_warning">#E8B33A</color>
+    <color name="launcher_danger">#E5675F</color>
+    <color name="launcher_danger_soft">#2A1B1E</color>
+    <color name="launcher_track">#232833</color>
+    <color name="launcher_ripple">#33FFFFFF</color>
+    <color name="launcher_scrim">#A6000000</color>
+</resources>
