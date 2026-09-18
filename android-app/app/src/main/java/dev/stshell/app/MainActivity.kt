@@ -266,8 +266,12 @@ class MainActivity : Activity() {
     // --- Update check ------------------------------------------------------
 
     /** Asks GitHub what the installed components' refs point at now. */
+    private val updateCallback: (Pair<UpdateReport?, String?>) -> Unit = { (report, failure) ->
+        onUpdateResult(report, failure)
+    }
+
     private fun checkForUpdates() {
-        if (!UpdateChecker.check(this) { report, failure -> onUpdateResult(report, failure) }) return
+        if (checkingDialog != null) return
         val row = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(24), dp(20), dp(24), dp(20))
@@ -277,9 +281,13 @@ class MainActivity : Activity() {
             setText(R.string.update_checking)
         }, LinearLayout.LayoutParams(-1, -2).apply { marginStart = dp(14) })
         checkingDialog = dialog().setTitle(R.string.update_title).setView(row)
-            .setNegativeButton(R.string.confirm_cancel) { _, _ -> checkingDialog = null }
-            .setOnDismissListener { checkingDialog = null }
+            .setNegativeButton(R.string.update_hide, null)
+            .setOnDismissListener {
+                checkingDialog = null
+                UpdateChecker.detach(updateCallback)
+            }
             .show()
+        UpdateChecker.check(this, updateCallback)
     }
     private fun onUpdateResult(report: UpdateReport?, failure: String?) {
         val pending = checkingDialog
@@ -301,12 +309,16 @@ class MainActivity : Activity() {
                 getString(R.string.update_available_summary,
                     report.updatable.size + if (report.appUpdateAvailable) 1 else 0)
             report.unknown > 0 -> getString(R.string.update_unavailable_summary, report.unknown)
+            report.components.isEmpty() -> getString(R.string.update_app_current_only)
             else -> getString(R.string.update_none)
         }
         column.addView(LauncherStyle.body(this, 14f, R.color.launcher_text_primary).apply {
             text = summary
             typeface = Typeface.DEFAULT_BOLD
         })
+        if (report.components.isEmpty()) {
+            column.addView(LauncherStyle.body(this, 13f).apply { setText(R.string.update_content_missing) })
+        }
         report.app?.let { app ->
             column.addView(updateRow(getString(R.string.update_component_app),
                 if (app.state == UpdateState.AVAILABLE)
@@ -520,6 +532,7 @@ class MainActivity : Activity() {
         super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
+        UpdateChecker.detach(updateCallback)
         checkingDialog?.dismiss(); checkingDialog = null
         closeControls()
         panel = null

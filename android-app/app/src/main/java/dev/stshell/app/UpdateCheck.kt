@@ -47,12 +47,23 @@ data class AppUpdate(
     val latestVersion: String = "",
     val releaseUrl: String = "",
     val error: String? = null,
+    val installedCode: Long? = null,
 ) {
     val state: UpdateState
-        get() = when {
-            error != null || latestVersion.isEmpty() -> UpdateState.UNKNOWN
-            AppVersions.isNewer(latestVersion, installedVersion) -> UpdateState.AVAILABLE
-            else -> UpdateState.CURRENT
+        get() {
+            val version = AppVersions.releaseVersion(latestVersion)
+            if (error != null || !AppVersions.isVersion(version) || !AppVersions.isVersion(installedVersion)) {
+                return UpdateState.UNKNOWN
+            }
+            // CI's -buildN[-run] is an Android versionCode, not a prerelease.
+            // Compare against the actual APK code, including equal/newer installs.
+            val code = AppVersions.releaseCode(latestVersion)
+            if (AppVersions.isBuildTag(latestVersion)) {
+                if (code == null) return UpdateState.UNKNOWN
+                val current = installedCode?.takeIf { it > 0 } ?: return UpdateState.UNKNOWN
+                return if (code > current) UpdateState.AVAILABLE else UpdateState.CURRENT
+            }
+            return if (AppVersions.isNewer(version, installedVersion)) UpdateState.AVAILABLE else UpdateState.CURRENT
         }
 }
 
@@ -130,35 +141,53 @@ object UpdateCatalog {
 object AppVersions {
     fun normalize(value: String?): String = (value ?: "").trim().removePrefix("v").removePrefix("V").trim()
 
-    private fun parts(value: String): Pair<List<Int>, String> {
-        val core = value.takeWhile { it != '-' && it != '+' }
-        val suffix = value.removePrefix(core).removePrefix("-").removePrefix("+")
-        val numbers = core.split('.').map { part -> part.takeWhile { it.isDigit() }.toIntOrNull() ?: -1 }
-        return numbers to suffix
+    private val versionPattern = Regex("(0|[1-9][0-9]*)(?:\\.(0|[1-9][0-9]*)){0,2}(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?")
+    private val buildTag = Regex("([0-9]+\\.[0-9]+\\.[0-9]+)-build([1-9][0-9]*)(?:-[0-9]+)?")
+
+    fun isBuildTag(tag: String): Boolean = buildTag.matches(normalize(tag))
+    fun releaseCode(tag: String): Long? = buildTag.matchEntire(normalize(tag))?.groupValues?.get(2)?.toLongOrNull()
+    fun releaseVersion(tag: String): String = buildTag.matchEntire(normalize(tag))?.groupValues?.get(1) ?: normalize(tag)
+
+    private fun parts(value: String): Pair<List<String>, List<String>> {
+        val withoutMetadata = normalize(value).substringBefore('+')
+        return withoutMetadata.substringBefore('-').split('.') to
+            withoutMetadata.substringAfter('-', "").let { if (it.isEmpty()) emptyList() else it.split('.') }
     }
 
-    /** True when [value] looks like a comparable MAJOR[.MINOR[.PATCH]] version. */
+    /** Strict numeric core and SemVer identifiers; build metadata has no precedence. */
     fun isVersion(value: String?): Boolean {
         val normalized = normalize(value)
-        if (normalized.isEmpty()) return false
-        val (numbers, _) = parts(normalized)
-        return numbers.isNotEmpty() && numbers.all { it >= 0 }
+        if (!versionPattern.matches(normalized)) return false
+        return parts(normalized).second.none { it.all(Char::isDigit) && it.length > 1 && it.startsWith('0') }
     }
+
+    private fun numericCompare(left: String, right: String): Int =
+        if (left.length != right.length) left.length.compareTo(right.length) else left.compareTo(right)
 
     /** Negative when [left] is older, positive when newer, 0 when equivalent. */
     fun compare(left: String, right: String): Int {
-        val (leftNumbers, leftSuffix) = parts(normalize(left))
-        val (rightNumbers, rightSuffix) = parts(normalize(right))
+        require(isVersion(left) && isVersion(right)) { "Invalid version" }
+        val (leftNumbers, leftSuffix) = parts(left)
+        val (rightNumbers, rightSuffix) = parts(right)
         for (index in 0 until maxOf(leftNumbers.size, rightNumbers.size)) {
-            val a = leftNumbers.getOrElse(index) { 0 }.coerceAtLeast(0)
-            val b = rightNumbers.getOrElse(index) { 0 }.coerceAtLeast(0)
-            if (a != b) return a.compareTo(b)
+            val order = numericCompare(leftNumbers.getOrElse(index) { "0" }, rightNumbers.getOrElse(index) { "0" })
+            if (order != 0) return order
         }
-        // 1.2.0 is newer than 1.2.0-rc1; two pre-releases compare by their tail.
         if (leftSuffix.isEmpty() && rightSuffix.isEmpty()) return 0
         if (leftSuffix.isEmpty()) return 1
         if (rightSuffix.isEmpty()) return -1
-        return leftSuffix.compareTo(rightSuffix)
+        for (index in 0 until minOf(leftSuffix.size, rightSuffix.size)) {
+            val a = leftSuffix[index]; val b = rightSuffix[index]
+            val aNumeric = a.all(Char::isDigit); val bNumeric = b.all(Char::isDigit)
+            val order = when {
+                aNumeric && bNumeric -> numericCompare(a, b)
+                aNumeric -> -1
+                bNumeric -> 1
+                else -> a.compareTo(b)
+            }
+            if (order != 0) return order
+        }
+        return leftSuffix.size.compareTo(rightSuffix.size)
     }
 
     /** Only claims an update when both versions are actually comparable. */

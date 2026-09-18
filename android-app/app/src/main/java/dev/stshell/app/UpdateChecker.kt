@@ -32,18 +32,12 @@ object UpdateChecker {
     }
     private val main = Handler(Looper.getMainLooper())
 
-    @Volatile private var running = false
+    private val flight = UpdateFlight<Pair<UpdateReport?, String?>>()
 
-    val busy: Boolean get() = running
-
-    /**
-     * Starts one check. Returns false when a check is already in flight, so the
-     * caller can leave the existing dialog alone instead of stacking requests.
-     * [callback] receives either a report or a user-facing failure message.
-     */
-    fun check(context: Context, callback: (UpdateReport?, String?) -> Unit): Boolean {
-        if (running) return false
-        running = true
+    /** UI-thread only: a new observer replaces the previous dialog/Activity. */
+    fun check(context: Context, callback: (Pair<UpdateReport?, String?>) -> Unit) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (!flight.observe(callback)) return
         val app = context.applicationContext
         io.execute {
             var report: UpdateReport? = null
@@ -56,26 +50,25 @@ object UpdateChecker {
                 val result = report
                 val message = failure
                 main.post {
-                    running = false
-                    callback(result, message)
+                    flight.complete(result to message)
                 }
             }
         }
-        return true
     }
 
-    private fun collect(app: Context): UpdateReport {
-        val installed = installedComponents(app)
-        check(installed.isNotEmpty()) { app.getString(R.string.update_not_installed) }
-        val components = installed.map { component ->
+    fun detach(callback: (Pair<UpdateReport?, String?>) -> Unit) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        flight.detach(callback)
+    }
+
+    private fun collect(app: Context): UpdateReport =
+        collectUpdates(installedComponents(app), { appUpdate(app) }) { component ->
             try {
                 ComponentUpdate(component, latestCommit(component.slug, component.ref))
             } catch (error: Exception) {
                 ComponentUpdate(component, error = describe(app, error))
             }
         }
-        return UpdateReport(components, appUpdate(app))
-    }
 
     /** The launcher's own release, which the user installs by hand. */
     private fun appUpdate(app: Context): AppUpdate {
@@ -89,7 +82,9 @@ object UpdateChecker {
             val tag = AppVersions.normalize(release.optString("tag_name"))
             val page = release.optString("html_url")
             val url = if (page.startsWith("https://github.com/$slug/releases/")) page else fallback
-            AppUpdate(version, tag, url)
+            val code = app.packageManager.getPackageInfo(app.packageName,
+                PackageManager.PackageInfoFlags.of(0)).longVersionCode
+            AppUpdate(version, tag, url, installedCode = code)
         } catch (error: Exception) {
             AppUpdate(version, releaseUrl = fallback, error = describe(app, error))
         }
